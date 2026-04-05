@@ -40,6 +40,7 @@ interface PeerState {
   isMuted: boolean;
   isCameraOff: boolean;
   isChatOpen: boolean;
+  videoFit: "cover" | "contain";
   errorMessage: string;
 
   // Actions
@@ -55,6 +56,7 @@ interface PeerState {
   toggleMute: () => void;
   toggleCamera: () => void;
   toggleChat: () => void;
+  toggleVideoFit: () => void;
   setError: (msg: string) => void;
   reset: () => void;
 }
@@ -72,6 +74,7 @@ const initialState = {
   isMuted: false,
   isCameraOff: false,
   isChatOpen: false,
+  videoFit: "cover" as const,
   errorMessage: "",
 };
 
@@ -107,6 +110,8 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   },
 
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
+  toggleVideoFit: () =>
+    set((s) => ({ videoFit: s.videoFit === "cover" ? "contain" : "cover" })),
 
   setError: (msg) => set({ errorMessage: msg, status: "error" }),
 

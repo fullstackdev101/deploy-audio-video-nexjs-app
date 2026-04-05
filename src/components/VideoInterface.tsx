@@ -15,6 +15,8 @@ export default function VideoInterface() {
     toggleCamera,
     toggleChat,
     isChatOpen,
+    videoFit,
+    toggleVideoFit,
   } = usePeerStore();
   const { endCall } = useCallActions();
 
@@ -78,7 +80,9 @@ export default function VideoInterface() {
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          className="w-full h-full object-cover"
+          className={`w-full h-full transition-all duration-300 bg-slate-950 ${
+            videoFit === "cover" ? "object-cover" : "object-contain"
+          }`}
         />
       ) : (
         <div className="flex flex-col items-center gap-4 text-white/40">
@@ -151,6 +155,12 @@ export default function VideoInterface() {
           active={isChatOpen}
           title={isChatOpen ? "Close Chat" : "Open Chat"}
           emoji="💬"
+        />
+        <ControlBtn
+          onClick={toggleVideoFit}
+          active={videoFit === "cover"}
+          title={videoFit === "cover" ? "Fit Video" : "Fill Video"}
+          emoji={videoFit === "cover" ? "🔲" : "🔳"}
         />
         {/* Divider */}
         <div className="w-px h-6 bg-white/10" />

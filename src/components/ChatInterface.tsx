@@ -34,9 +34,9 @@ export default function ChatInterface() {
       <button
         id="btn-toggle-chat"
         onClick={toggleChat}
-        className={`fixed bottom-24 right-6 z-30 flex items-center justify-center w-14 h-14 rounded-full shadow-2xl transition-all duration-300 hover:scale-110 active:scale-95 ${
+        className={`fixed bottom-24 right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full shadow-2xl transition-all duration-300 hover:scale-110 active:scale-95 ${
           isChatOpen
-            ? "bg-indigo-600 text-white"
+            ? "bg-indigo-600 text-white shadow-indigo-500/40"
             : "bg-slate-800 border border-white/10 text-white/70 hover:text-white"
         }`}
         title="Toggle Chat"
@@ -63,8 +63,7 @@ export default function ChatInterface() {
 
       {/* Chat sidebar */}
       <div
-        className={`fixed top-0 right-0 h-full w-80 bg-slate-900/95 backdrop-blur-xl 
-          border-l border-white/10 shadow-2xl z-20 flex flex-col
+        className={`fixed top-0 right-0 h-full w-80 bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col
           transform transition-transform duration-300 ease-in-out
           ${isChatOpen ? "translate-x-0" : "translate-x-full"}`}
       >
