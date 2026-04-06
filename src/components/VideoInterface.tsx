@@ -26,21 +26,26 @@ export default function VideoInterface() {
   const dragging = useRef(false);
   const dragOffset = useRef({ x: 0, y: 0 });
 
-  // ── Attach remote stream ──────────────────────────────────────────────────
+  // ── Attach remote stream via callback ref so srcObject is set the moment
+  //    the <video> element mounts, regardless of stream timing. ─────────────
+  const remoteCallbackRef = useCallback(
+    (el: HTMLVideoElement | null) => {
+      (remoteVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+      if (el && remoteStream && el.srcObject !== remoteStream) {
+        el.srcObject = remoteStream;
+      }
+    },
+    [remoteStream]
+  );
+
+  // Also update if stream object reference changes after mount
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
 
-  // ── Attach local stream ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
-
-  // ── Draggable local PiP ───────────────────────────────────────────────────
+  // ── Draggable local PiP — mouse ───────────────────────────────────────────
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       dragging.current = true;
@@ -79,7 +84,7 @@ export default function VideoInterface() {
       {/* Remote video - full background */}
       {remoteStream ? (
         <video
-          ref={remoteVideoRef}
+          ref={remoteCallbackRef}
           autoPlay
           playsInline
           className={`w-full h-full transition-all duration-300 bg-slate-950 ${
@@ -123,31 +128,16 @@ export default function VideoInterface() {
         </div>
       )}
 
-      {/* Draggable local video PiP */}
-      {localStream && status === "connected" && (
-        <div
+      {/* Draggable local video PiP — visible during CALLING and CONNECTED */}
+      {localStream && (status === "connected" || status === "calling") && (
+        <LocalPiP
+          localVideoRef={localVideoRef}
+          localStream={localStream}
+          localPos={localPos}
+          setLocalPos={setLocalPos}
+          isCameraOff={isCameraOff}
           onMouseDown={onMouseDown}
-          style={{ left: localPos.x, top: localPos.y }}
-          className="absolute w-44 h-32 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl cursor-grab active:cursor-grabbing select-none z-10"
-        >
-          <video
-            ref={localVideoRef}
-            autoPlay
-            muted
-            playsInline
-            className={`w-full h-full object-cover ${
-              isCameraOff ? "opacity-0" : ""
-            }`}
-          />
-          {isCameraOff && (
-            <div className="absolute inset-0 bg-slate-800 flex items-center justify-center">
-              <span className="text-3xl">🚫</span>
-            </div>
-          )}
-          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[10px] text-white/60 bg-black/40 rounded px-1">
-            You
-          </div>
-        </div>
+        />
       )}
 
       {/* Control Bar — only shown when fully connected */}
@@ -192,6 +182,101 @@ export default function VideoInterface() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Local PiP: callback ref ensures srcObject assigned on mount ─────────────
+function LocalPiP({
+  localVideoRef,
+  localStream,
+  localPos,
+  setLocalPos,
+  isCameraOff,
+  onMouseDown,
+}: {
+  localVideoRef: React.RefObject<HTMLVideoElement | null>;
+  localStream: MediaStream;
+  localPos: { x: number; y: number };
+  setLocalPos: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
+  isCameraOff: boolean;
+  onMouseDown: (e: React.MouseEvent) => void;
+}) {
+  const dragging = useRef(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  // Callback ref: fires when the <video> element first mounts.
+  // This guarantees srcObject is set even if localStream was already
+  // in the store before this subtree appeared in the DOM.
+  const videoCallbackRef = useCallback(
+    (el: HTMLVideoElement | null) => {
+      (localVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+      if (el && el.srcObject !== localStream) {
+        el.srcObject = localStream;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [localStream]
+  );
+
+  // ── Touch drag support for mobile ──────────────────────────────────────
+  const onTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      dragging.current = true;
+      const touch = e.touches[0];
+      dragOffset.current = {
+        x: touch.clientX - localPos.x,
+        y: touch.clientY - localPos.y,
+      };
+    },
+    [localPos]
+  );
+
+  useEffect(() => {
+    const onTouchMove = (e: TouchEvent) => {
+      if (!dragging.current) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      setLocalPos({
+        x: touch.clientX - dragOffset.current.x,
+        y: touch.clientY - dragOffset.current.y,
+      });
+    };
+    const onTouchEnd = () => {
+      dragging.current = false;
+    };
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd);
+    return () => {
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [setLocalPos]);
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onTouchStart={onTouchStart}
+      style={{ left: localPos.x, top: localPos.y }}
+      className="absolute w-44 h-32 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl cursor-grab active:cursor-grabbing select-none z-10"
+    >
+      <video
+        ref={videoCallbackRef}
+        autoPlay
+        muted
+        playsInline
+        className={`w-full h-full object-cover ${
+          isCameraOff ? "opacity-0" : ""
+        }`}
+      />
+      {isCameraOff && (
+        <div className="absolute inset-0 bg-slate-800 flex items-center justify-center">
+          <span className="text-3xl">🚫</span>
+        </div>
+      )}
+      <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[10px] text-white/60 bg-black/40 rounded px-1">
+        You
+      </div>
     </div>
   );
 }

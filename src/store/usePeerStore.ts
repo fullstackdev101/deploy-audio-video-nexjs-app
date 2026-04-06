@@ -102,7 +102,10 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   toggleMute: () => {
     const { localStream, isMuted } = get();
     if (localStream) {
-      localStream.getAudioTracks().forEach((t) => (t.enabled = isMuted));
+      // isMuted is the CURRENT state; we're toggling TO the opposite.
+      // If currently muted (isMuted=true) → we want to UN-mute → enable track.
+      // If currently unmuted (isMuted=false) → we want to MUTE → disable track.
+      localStream.getAudioTracks().forEach((t) => (t.enabled = isMuted)); // isMuted=true means "was muted" → enable now
     }
     set({ isMuted: !isMuted });
   },
@@ -110,7 +113,10 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   toggleCamera: () => {
     const { localStream, isCameraOff } = get();
     if (localStream) {
-      localStream.getVideoTracks().forEach((t) => (t.enabled = isCameraOff));
+      // isCameraOff is the CURRENT state; we're toggling TO the opposite.
+      // If camera is off (isCameraOff=true) → enabling → set enabled=true.
+      // If camera is on (isCameraOff=false) → disabling → set enabled=false.
+      localStream.getVideoTracks().forEach((t) => (t.enabled = isCameraOff)); // isCameraOff=true means "was off" → enable now
     }
     set({ isCameraOff: !isCameraOff });
   },
