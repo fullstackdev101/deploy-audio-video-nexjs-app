@@ -48,7 +48,7 @@ export default function IncomingCallModal() {
 
       return () => {
         stopped = true;
-        ctx?.close().catch(() => {});
+        ctx?.close().catch(() => { });
       };
     }
   }, [isVisible]);

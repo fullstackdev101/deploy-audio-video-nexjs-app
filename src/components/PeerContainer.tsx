@@ -75,10 +75,12 @@ export default function PeerContainer({
   const localStreamRef = useRef<MediaStream | null>(null);
 
   // ── Wire up a data connection (used by both caller & receiver) ──────────────
+  // NOTE: We only register the connection in the store AFTER it is open so that
+  // ChatInterface's `canSend` guard (dataConnection && status==='connected')
+  // only becomes true once the channel is actually ready to send.
   const wireDataConnection = useCallback(
     (conn: DataConnection) => {
-      setDataConnection(conn);
-      conn.on("data", (raw) => {
+      const onData = (raw: unknown) => {
         try {
           const parsed = JSON.parse(raw as string) as { text: string };
           const msg: ChatMessage = {
@@ -91,16 +93,28 @@ export default function PeerContainer({
         } catch {
           /* ignore malformed */
         }
-      });
-      conn.on("close", () => {
+      };
+      const onClose = () => {
         setDataConnection(null);
         // Only drop back to ready if we are not mid-call
         const s = usePeerStore.getState().status;
         if (s !== "connected" && s !== "calling") {
           setStatus("ready");
         }
-      });
+      };
+
+      conn.on("data", onData);
+      conn.on("close", onClose);
       conn.on("error", () => setDataConnection(null));
+
+      // Only mark connection as ready once the channel is actually open.
+      // If already open (e.g. the caller side receives its own outbound conn
+      // back), set it immediately.
+      if (conn.open) {
+        setDataConnection(conn);
+      } else {
+        conn.on("open", () => setDataConnection(conn));
+      }
     },
     [setDataConnection, addMessage, setStatus]
   );
@@ -122,13 +136,15 @@ export default function PeerContainer({
         setStatus("ready");
       });
 
-      // ── Incoming text-only connection ──
+      // ── Incoming data connection (from the caller) ──
+      // Always accept the inbound connection. If there was a stale one, close
+      // it first so we don't end up with two competing channels.
       peerInstance.on("connection", (conn) => {
-        // If we already have a data connection (e.g. the one opened alongside a
-        // video call), skip wiring a duplicate.
-        if (!usePeerStore.getState().dataConnection) {
-          wireDataConnection(conn);
+        const existing = usePeerStore.getState().dataConnection;
+        if (existing && existing !== conn) {
+          existing.close();
         }
+        wireDataConnection(conn);
       });
 
       // ── Incoming media call: DON'T auto-answer — park it for the user ──
@@ -257,9 +273,12 @@ export function useCallActions() {
     });
 
     // ── Open data channel alongside the video call ───────────────────────────
-    if (!store.dataConnection) {
+    // The caller always opens ONE outbound DataConnection. The receiver will get
+    // it via the peer "connection" event and wireDataConnection will handle it.
+    // We do NOT store it until "open" fires to avoid the race where the UI
+    // shows "Establishing chat channel…" indefinitely.
+    {
       const conn = peer.connect(remotePeerId, { reliable: true });
-      store.setDataConnection(conn);
       conn.on("data", (raw) => {
         try {
           const parsed = JSON.parse(raw as string) as { text: string };
@@ -272,6 +291,9 @@ export function useCallActions() {
         } catch { /* ignore */ }
       });
       conn.on("close", () => store.setDataConnection(null));
+      conn.on("error", () => store.setDataConnection(null));
+      // Only register as ready once open
+      conn.on("open", () => store.setDataConnection(conn));
     }
   }, [store]);
 
@@ -324,23 +346,12 @@ export function useCallActions() {
       store.setStatus("ready");
     });
 
-    // ── Open data channel back to caller (if not already established) ─────
-    if (!store.dataConnection && incomingCall.peer && peer) {
-      const conn = peer.connect(incomingCall.peer, { reliable: true });
-      store.setDataConnection(conn);
-      conn.on("data", (raw) => {
-        try {
-          const parsed = JSON.parse(raw as string) as { text: string };
-          store.addMessage({
-            id: crypto.randomUUID(),
-            from: "them",
-            text: parsed.text,
-            timestamp: new Date(),
-          });
-        } catch { /* ignore */ }
-      });
-      conn.on("close", () => store.setDataConnection(null));
-    }
+    // ── Data channel for the receiver ─────────────────────────────────────
+    // The CALLER already opened an outbound DataConnection to us. The peer
+    // "connection" event in PeerContainer will fire and wireDataConnection
+    // will register it once it's open. We must NOT open a second outbound
+    // connection here — that creates a duplicate race that causes both sides
+    // to stay stuck on "Establishing chat channel…".
   }, [store]);
 
   // ── DECLINE INCOMING CALL ───────────────────────────────────────────────────
