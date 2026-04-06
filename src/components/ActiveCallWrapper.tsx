@@ -14,9 +14,13 @@ export default function ActiveCallWrapper({
 }) {
   const { localStream, remoteStream, status } = usePeerStore();
   const hasActiveMedia = !!(localStream || remoteStream);
-  const isCallActive = status === "calling" || status === "connected";
+  // Only show the fullscreen video overlay when there is real media.
+  // Text-only chat sets status='connected' but has no streams — keep it on
+  // the dashboard instead of launching a black video screen.
+  const isMediaCallActive =
+    hasActiveMedia && (status === "calling" || status === "connected");
 
-  if (!hasActiveMedia && !isCallActive) return null;
+  if (!isMediaCallActive) return null;
 
   return (
     <div className="fixed inset-0 z-40 bg-black flex flex-col">
