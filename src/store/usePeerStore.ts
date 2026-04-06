@@ -9,6 +9,7 @@ export type ConnectionStatus =
   | "calling"
   | "incoming"
   | "connected"
+  | "declined"
   | "error";
 
 export interface ChatMessage {
@@ -30,6 +31,8 @@ interface PeerState {
   // Connections
   dataConnection: DataConnection | null;
   mediaCall: MediaConnection | null;
+  /** Pending incoming call awaiting accept/decline */
+  incomingCall: MediaConnection | null;
 
   // Chat
   chatHistory: ChatMessage[];
@@ -50,6 +53,7 @@ interface PeerState {
   setRemoteStream: (stream: MediaStream | null) => void;
   setDataConnection: (conn: DataConnection | null) => void;
   setMediaCall: (call: MediaConnection | null) => void;
+  setIncomingCall: (call: MediaConnection | null) => void;
   setStatus: (status: ConnectionStatus) => void;
   setRemotePeerId: (id: string) => void;
   addMessage: (msg: ChatMessage) => void;
@@ -68,6 +72,7 @@ const initialState = {
   remoteStream: null,
   dataConnection: null,
   mediaCall: null,
+  incomingCall: null,
   chatHistory: [],
   status: "idle" as ConnectionStatus,
   remotePeerId: "",
@@ -87,6 +92,7 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   setRemoteStream: (stream) => set({ remoteStream: stream }),
   setDataConnection: (conn) => set({ dataConnection: conn }),
   setMediaCall: (call) => set({ mediaCall: call }),
+  setIncomingCall: (call) => set({ incomingCall: call }),
   setStatus: (status) => set({ status }),
   setRemotePeerId: (id) => set({ remotePeerId: id }),
 
@@ -116,16 +122,24 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   setError: (msg) => set({ errorMessage: msg, status: "error" }),
 
   reset: () =>
-    set({
-      dataConnection: null,
-      mediaCall: null,
-      remoteStream: null,
-      // chatHistory intentionally preserved — messages survive call end
-      status: "ready",
-      remotePeerId: "",
-      isMuted: false,
-      isCameraOff: false,
-      isChatOpen: false,
-      errorMessage: "",
+    set((state) => {
+      // Stop any lingering local tracks
+      state.localStream?.getTracks().forEach((t) => t.stop());
+      // Decline any pending incoming call cleanly
+      state.incomingCall?.close();
+      return {
+        localStream: null,
+        dataConnection: null,
+        mediaCall: null,
+        incomingCall: null,
+        remoteStream: null,
+        // chatHistory intentionally preserved — messages survive call end
+        status: "ready",
+        remotePeerId: "",
+        isMuted: false,
+        isCameraOff: false,
+        isChatOpen: false,
+        errorMessage: "",
+      };
     }),
 }));

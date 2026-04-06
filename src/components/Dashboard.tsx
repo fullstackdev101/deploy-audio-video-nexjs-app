@@ -205,7 +205,7 @@ function StatusBadge({
     calling: {
       color: "bg-indigo-950 border-indigo-800",
       dot: "bg-indigo-400 animate-pulse",
-      label: "Calling…",
+      label: "Calling… (waiting for answer)",
     },
     incoming: {
       color: "bg-violet-950 border-violet-800",
@@ -216,6 +216,11 @@ function StatusBadge({
       color: "bg-sky-950 border-sky-800",
       dot: "bg-sky-400 animate-pulse",
       label: "Connected",
+    },
+    declined: {
+      color: "bg-orange-950 border-orange-800",
+      dot: "bg-orange-400",
+      label: "Call declined",
     },
     error: {
       color: "bg-red-950 border-red-800",

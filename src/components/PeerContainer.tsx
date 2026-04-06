@@ -31,7 +31,6 @@ function mediaErrorMessage(err: unknown): string {
 
 // ─── Get best available stream: video+audio → audio-only → throw ─────────────
 async function getBestStream(): Promise<MediaStream> {
-  // First try: full video + audio
   try {
     return await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -39,25 +38,20 @@ async function getBestStream(): Promise<MediaStream> {
     });
   } catch (videoErr) {
     const name = (videoErr as Error).name;
-
-    // If the error was a hard block (denied/not found for audio), rethrow
-    if (
-      name === "NotAllowedError" ||
-      name === "PermissionDeniedError"
-    ) {
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
       throw videoErr;
     }
-
-    // Fallback: audio-only (no camera available / camera in use)
     try {
       console.warn("Video unavailable, falling back to audio-only:", videoErr);
       return await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (audioErr) {
-      // Both failed — throw the original video error for a better message
       throw videoErr ?? audioErr;
     }
   }
 }
+
+// ─── How long the caller waits before giving up (ms) ─────────────────────────
+const CALL_TIMEOUT_MS = 60_000;
 
 export default function PeerContainer({
   children,
@@ -71,6 +65,7 @@ export default function PeerContainer({
     setRemoteStream,
     setDataConnection,
     setMediaCall,
+    setIncomingCall,
     setStatus,
     addMessage,
     setError,
@@ -79,8 +74,8 @@ export default function PeerContainer({
   const peerRef = useRef<Peer | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  // Setup an incoming DataConnection
-  const setupDataConnection = useCallback(
+  // ── Wire up a data connection (used by both caller & receiver) ──────────────
+  const wireDataConnection = useCallback(
     (conn: DataConnection) => {
       setDataConnection(conn);
       conn.on("data", (raw) => {
@@ -99,68 +94,26 @@ export default function PeerContainer({
       });
       conn.on("close", () => {
         setDataConnection(null);
-        setStatus("ready");
+        // Only drop back to ready if we are not mid-call
+        const s = usePeerStore.getState().status;
+        if (s !== "connected" && s !== "calling") {
+          setStatus("ready");
+        }
       });
       conn.on("error", () => setDataConnection(null));
     },
     [setDataConnection, addMessage, setStatus]
   );
 
-  // Setup an incoming MediaCall (answer)
-  const setupMediaCall = useCallback(
-    async (call: MediaConnection) => {
-      // Guard: require getUserMedia API
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Your browser does not support media devices (use HTTPS or a modern browser).");
-        return;
-      }
-
-      try {
-        const stream = await getBestStream();
-        localStreamRef.current = stream;
-        setLocalStream(stream);
-        call.answer(stream);
-        setMediaCall(call);
-        setStatus("connected");
-
-        call.on("stream", (remoteStream) => {
-          setRemoteStream(remoteStream);
-        });
-        call.on("close", () => {
-          setRemoteStream(null);
-          setMediaCall(null);
-          setStatus("ready");
-        });
-        call.on("error", () => {
-          setRemoteStream(null);
-          setMediaCall(null);
-          setStatus("ready");
-        });
-
-        // Open a data channel back to the caller for text chat
-        // (caller also opens one; the peer.on('connection') handler will wire
-        //  the caller's channel in setupDataConnection automatically)
-      } catch (err) {
-        console.error("[PeerLink] setupMediaCall error:", err);
-        setError(mediaErrorMessage(err));
-      }
-    },
-    [setLocalStream, setMediaCall, setRemoteStream, setStatus, setError]
-  );
-
+  // ── PEER INITIALISATION ────────────────────────────────────────────────────
   useEffect(() => {
     let peerInstance: Peer;
 
     const init = async () => {
       setStatus("initializing");
-
-      // Dynamic import — PeerJS is browser-only
       const { default: PeerJS } = await import("peerjs");
 
-      peerInstance = new PeerJS(undefined as unknown as string, {
-        debug: 1,
-      });
-
+      peerInstance = new PeerJS(undefined as unknown as string, { debug: 1 });
       peerRef.current = peerInstance;
       setPeer(peerInstance);
 
@@ -169,13 +122,45 @@ export default function PeerContainer({
         setStatus("ready");
       });
 
+      // ── Incoming text-only connection ──
       peerInstance.on("connection", (conn) => {
-        setupDataConnection(conn);
+        // If we already have a data connection (e.g. the one opened alongside a
+        // video call), skip wiring a duplicate.
+        if (!usePeerStore.getState().dataConnection) {
+          wireDataConnection(conn);
+        }
       });
 
+      // ── Incoming media call: DON'T auto-answer — park it for the user ──
       peerInstance.on("call", (call) => {
+        // Reject if already in a call
+        const currentStatus = usePeerStore.getState().status;
+        if (
+          currentStatus === "connected" ||
+          currentStatus === "calling" ||
+          currentStatus === "incoming"
+        ) {
+          call.close();
+          return;
+        }
+        setIncomingCall(call);
         setStatus("incoming");
-        setupMediaCall(call);
+
+        // If the caller hangs up before we answer, clean up automatically
+        call.on("close", () => {
+          const s = usePeerStore.getState().status;
+          if (s === "incoming") {
+            setIncomingCall(null);
+            setStatus("ready");
+          }
+        });
+        call.on("error", () => {
+          const s = usePeerStore.getState().status;
+          if (s === "incoming") {
+            setIncomingCall(null);
+            setStatus("ready");
+          }
+        });
       });
 
       peerInstance.on("error", (err) => {
@@ -205,11 +190,11 @@ export default function PeerContainer({
 export function useCallActions() {
   const store = usePeerStore();
 
+  // ── OUTGOING CALL ────────────────────────────────────────────────────────────
   const startCall = useCallback(async () => {
     const { peer, remotePeerId, setError } = store;
     if (!peer || !remotePeerId) return;
 
-    // Guard: require getUserMedia API (needs HTTPS outside localhost)
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(
         "Media devices are not available. Make sure you are using HTTPS or localhost."
@@ -217,57 +202,158 @@ export function useCallActions() {
       return;
     }
 
+    let stream: MediaStream;
     try {
-      const stream = await getBestStream();
-      store.setLocalStream(stream);
-      store.setStatus("calling");
-
-      // ── 1. Media call ──────────────────────────────────────────────────────
-      const call = peer.call(remotePeerId, stream);
-      store.setMediaCall(call);
-
-      call.on("stream", (remoteStream) => {
-        store.setRemoteStream(remoteStream);
-        store.setStatus("connected");
-      });
-      call.on("close", () => {
-        store.setRemoteStream(null);
-        store.setMediaCall(null);
-        store.setStatus("ready");
-      });
-      call.on("error", (err) => {
-        console.error("[PeerLink] call error:", err);
-        store.setRemoteStream(null);
-        store.setMediaCall(null);
-        store.setStatus("ready");
-      });
-
-      // ── 2. Data channel (text chat) alongside the video call ───────────────
-      // Only open if we don't already have one (e.g. from a prior startTextChat)
-      if (!store.dataConnection) {
-        const conn = peer.connect(remotePeerId, { reliable: true });
-        store.setDataConnection(conn);
-        conn.on("data", (raw) => {
-          try {
-            const parsed = JSON.parse(raw as string) as { text: string };
-            store.addMessage({
-              id: crypto.randomUUID(),
-              from: "them",
-              text: parsed.text,
-              timestamp: new Date(),
-            });
-          } catch { /* ignore */ }
-        });
-        conn.on("close", () => {
-          store.setDataConnection(null);
-        });
-      }
+      stream = await getBestStream();
     } catch (err) {
       console.error("[PeerLink] startCall getUserMedia error:", err);
       store.setError(mediaErrorMessage(err));
+      return;
+    }
+
+    store.setLocalStream(stream);
+    store.setStatus("calling");
+
+    // ── Media call ─────────────────────────────────────────────────────────
+    const call = peer.call(remotePeerId, stream);
+    store.setMediaCall(call);
+
+    // ── Timeout: give up if receiver doesn't answer ─────────────────────────
+    const timeoutId = setTimeout(() => {
+      const s = usePeerStore.getState().status;
+      if (s === "calling") {
+        call.close();
+        stream.getTracks().forEach((t) => t.stop());
+        store.setLocalStream(null);
+        store.setMediaCall(null);
+        store.setStatus("ready");
+        store.setError(
+          "No answer. The other peer did not accept the call in time."
+        );
+      }
+    }, CALL_TIMEOUT_MS);
+
+    call.on("stream", (remoteStream) => {
+      clearTimeout(timeoutId);
+      store.setRemoteStream(remoteStream);
+      store.setStatus("connected");
+    });
+    call.on("close", () => {
+      clearTimeout(timeoutId);
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+    });
+    call.on("error", (err) => {
+      clearTimeout(timeoutId);
+      console.error("[PeerLink] call error:", err);
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+    });
+
+    // ── Open data channel alongside the video call ───────────────────────────
+    if (!store.dataConnection) {
+      const conn = peer.connect(remotePeerId, { reliable: true });
+      store.setDataConnection(conn);
+      conn.on("data", (raw) => {
+        try {
+          const parsed = JSON.parse(raw as string) as { text: string };
+          store.addMessage({
+            id: crypto.randomUUID(),
+            from: "them",
+            text: parsed.text,
+            timestamp: new Date(),
+          });
+        } catch { /* ignore */ }
+      });
+      conn.on("close", () => store.setDataConnection(null));
     }
   }, [store]);
 
+  // ── ACCEPT INCOMING CALL ────────────────────────────────────────────────────
+  const acceptCall = useCallback(async () => {
+    const { incomingCall, peer, setError } = store;
+    if (!incomingCall) return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(
+        "Media devices are not available. Make sure you are using HTTPS or localhost."
+      );
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await getBestStream();
+    } catch (err) {
+      console.error("[PeerLink] acceptCall getUserMedia error:", err);
+      store.setError(mediaErrorMessage(err));
+      // Close the call because we can't answer
+      incomingCall.close();
+      store.setIncomingCall(null);
+      store.setStatus("ready");
+      return;
+    }
+
+    store.setLocalStream(stream);
+    incomingCall.answer(stream);
+    store.setMediaCall(incomingCall);
+    store.setIncomingCall(null);
+    store.setStatus("connected");
+
+    incomingCall.on("stream", (remoteStream) => {
+      store.setRemoteStream(remoteStream);
+    });
+    incomingCall.on("close", () => {
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+    });
+    incomingCall.on("error", () => {
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+    });
+
+    // ── Open data channel back to caller (if not already established) ─────
+    if (!store.dataConnection && incomingCall.peer && peer) {
+      const conn = peer.connect(incomingCall.peer, { reliable: true });
+      store.setDataConnection(conn);
+      conn.on("data", (raw) => {
+        try {
+          const parsed = JSON.parse(raw as string) as { text: string };
+          store.addMessage({
+            id: crypto.randomUUID(),
+            from: "them",
+            text: parsed.text,
+            timestamp: new Date(),
+          });
+        } catch { /* ignore */ }
+      });
+      conn.on("close", () => store.setDataConnection(null));
+    }
+  }, [store]);
+
+  // ── DECLINE INCOMING CALL ───────────────────────────────────────────────────
+  const declineCall = useCallback(() => {
+    const { incomingCall } = store;
+    if (incomingCall) {
+      incomingCall.close();
+      store.setIncomingCall(null);
+    }
+    store.setStatus("ready");
+  }, [store]);
+
+  // ── TEXT-ONLY CHAT ──────────────────────────────────────────────────────────
   const startTextChat = useCallback(() => {
     const { peer, remotePeerId } = store;
     if (!peer || !remotePeerId) return;
@@ -275,18 +361,18 @@ export function useCallActions() {
     const conn = peer.connect(remotePeerId, { reliable: true });
     store.setDataConnection(conn);
     store.setStatus("connected");
-    store.toggleChat();
+    // Open chat panel immediately
+    if (!store.isChatOpen) store.toggleChat();
 
     conn.on("data", (raw) => {
       try {
         const parsed = JSON.parse(raw as string) as { text: string };
-        const msg: ChatMessage = {
+        store.addMessage({
           id: crypto.randomUUID(),
           from: "them",
           text: parsed.text,
           timestamp: new Date(),
-        };
-        store.addMessage(msg);
+        });
       } catch {
         /* ignore */
       }
@@ -297,17 +383,19 @@ export function useCallActions() {
     });
   }, [store]);
 
+  // ── END CALL / DISCONNECT ───────────────────────────────────────────────────
   const endCall = useCallback(() => {
-    const { mediaCall, dataConnection, localStream } = store;
+    const { mediaCall, dataConnection, localStream, incomingCall } = store;
     mediaCall?.close();
     dataConnection?.close();
-    if (localStream) {
-      localStream.getTracks().forEach((t) => t.stop());
-    }
+    incomingCall?.close();
+    // Stop all local tracks explicitly before reset
+    localStream?.getTracks().forEach((t) => t.stop());
     store.setLocalStream(null);
     store.reset();
   }, [store]);
 
+  // ── SEND MESSAGE ────────────────────────────────────────────────────────────
   const sendMessage = useCallback(
     (text: string) => {
       const { dataConnection } = store;
@@ -323,5 +411,5 @@ export function useCallActions() {
     [store]
   );
 
-  return { startCall, startTextChat, endCall, sendMessage };
+  return { startCall, acceptCall, declineCall, startTextChat, endCall, sendMessage };
 }
