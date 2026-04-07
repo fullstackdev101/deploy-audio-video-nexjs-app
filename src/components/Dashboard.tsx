@@ -36,14 +36,18 @@ export default function Dashboard() {
 
   const isConnected = status === "connected";
   const isBusy =
-    status === "calling" ||
-    status === "incoming" ||
-    status === "connected";
+    status === "calling" || status === "incoming" || status === "connected";
   const isReady = status === "ready" || status === "connected";
   const hasActiveMedia = !!(localStream || remoteStream);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex items-center justify-center p-6">
+    <div
+      className="min-h-screen flex items-center justify-center p-6"
+      style={{
+        background:
+          "linear-gradient(135deg, #0f172a 0%, #111827 50%, #312e81 100%)",
+      }}
+    >
       {/* Background orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
@@ -78,7 +82,12 @@ export default function Dashboard() {
         {/* My ID Card */}
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-5 space-y-3">
           <div className="flex items-center gap-2 text-white/50 text-xs uppercase tracking-widest font-semibold">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -97,7 +106,10 @@ export default function Dashboard() {
                   <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
                 </div>
               ) : (
-                <p className="text-indigo-300 font-mono text-sm truncate" id="my-peer-id">
+                <p
+                  className="text-indigo-300 font-mono text-sm truncate"
+                  id="my-peer-id"
+                >
                   {myId || "—"}
                 </p>
               )}
@@ -110,12 +122,32 @@ export default function Dashboard() {
               title="Copy ID"
             >
               {copied ? (
-                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                <svg
+                  className="w-4 h-4 text-emerald-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
                 </svg>
               ) : (
-                <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                <svg
+                  className="w-4 h-4 text-indigo-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
                 </svg>
               )}
             </button>
@@ -125,8 +157,18 @@ export default function Dashboard() {
         {/* Connect Card */}
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-5 space-y-4">
           <div className="flex items-center gap-2 text-white/50 text-xs uppercase tracking-widest font-semibold">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+              />
             </svg>
             Connect to Peer
           </div>
@@ -174,9 +216,7 @@ export default function Dashboard() {
         </div>
 
         {/* Active session info */}
-        {hasActiveMedia && (
-          <ActiveSessionCard />
-        )}
+        {hasActiveMedia && <ActiveSessionCard />}
 
         {/* Footer */}
         <p className="text-center text-white/20 text-xs">
@@ -251,7 +291,9 @@ function StatusBadge({
           </p>
         </div>
         <div className="pl-4.5 flex flex-col gap-1 text-xs text-red-400/70">
-          <p>• Make sure your browser has camera/mic permission for this site.</p>
+          <p>
+            • Make sure your browser has camera/mic permission for this site.
+          </p>
           <p>• Check that no other app is using the camera.</p>
           <p>• Try refreshing the page and allowing access when prompted.</p>
         </div>
@@ -315,7 +357,18 @@ function CallButton({
 }
 
 function ActiveSessionCard() {
-  const { status, remoteStream } = usePeerStore();
+  const { status, remoteStream, hasRemoteVideo } = usePeerStore();
+  const connectionText =
+    status === "connected"
+      ? hasRemoteVideo
+        ? "Connected with video"
+        : "Connected with audio"
+      : status === "calling"
+        ? "Connecting…"
+        : status === "incoming"
+          ? "Incoming call"
+          : "Active";
+
   return (
     <div className="bg-emerald-950/50 border border-emerald-700/30 rounded-2xl p-4 flex items-center gap-3">
       <div className="w-10 h-10 rounded-full bg-emerald-600/30 flex items-center justify-center text-lg">
@@ -323,10 +376,9 @@ function ActiveSessionCard() {
       </div>
       <div>
         <p className="text-emerald-300 text-sm font-semibold">
-          Active{" "}
-          {remoteStream ? "Video Call" : "Text Session"}
+          Active {remoteStream ? "Video Call" : "Text Session"}
         </p>
-        <p className="text-white/40 text-xs capitalize">{status}</p>
+        <p className="text-white/40 text-xs">{connectionText}</p>
       </div>
       <div className="ml-auto flex gap-1">
         {[0, 1, 2].map((i) => (

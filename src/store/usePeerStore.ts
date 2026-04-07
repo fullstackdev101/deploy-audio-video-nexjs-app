@@ -27,6 +27,10 @@ interface PeerState {
   // Streams
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  /** Tracks whether remote has video (not just stream existence) */
+  hasRemoteVideo: boolean;
+  /** Tracks whether local has video (not just stream existence) */
+  hasLocalVideo: boolean;
 
   // Connections
   dataConnection: DataConnection | null;
@@ -59,6 +63,8 @@ interface PeerState {
   setStatus: (status: ConnectionStatus) => void;
   setRemotePeerId: (id: string) => void;
   setIsAnswering: (v: boolean) => void;
+  setHasRemoteVideo: (has: boolean) => void;
+  setHasLocalVideo: (has: boolean) => void;
   addMessage: (msg: ChatMessage) => void;
   toggleMute: () => void;
   toggleCamera: () => void;
@@ -73,6 +79,8 @@ const initialState = {
   myId: "",
   localStream: null,
   remoteStream: null,
+  hasRemoteVideo: false,
+  hasLocalVideo: false,
   dataConnection: null,
   mediaCall: null,
   incomingCall: null,
@@ -94,6 +102,8 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   setMyId: (id) => set({ myId: id }),
   setLocalStream: (stream) => set({ localStream: stream }),
   setRemoteStream: (stream) => set({ remoteStream: stream }),
+  setHasRemoteVideo: (has) => set({ hasRemoteVideo: has }),
+  setHasLocalVideo: (has) => set({ hasLocalVideo: has }),
   setDataConnection: (conn) => set({ dataConnection: conn }),
   setMediaCall: (call) => set({ mediaCall: call }),
   setIncomingCall: (call) => set({ incomingCall: call }),
@@ -140,10 +150,12 @@ export const usePeerStore = create<PeerState>((set, get) => ({
       state.incomingCall?.close();
       return {
         localStream: null,
+        remoteStream: null,
+        hasRemoteVideo: false,
+        hasLocalVideo: false,
         dataConnection: null,
         mediaCall: null,
         incomingCall: null,
-        remoteStream: null,
         // chatHistory intentionally preserved — messages survive call end
         status: "ready",
         remotePeerId: "",

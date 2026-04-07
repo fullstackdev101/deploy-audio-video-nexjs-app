@@ -12,19 +12,19 @@ export default function ActiveCallWrapper({
 }: {
   children: React.ReactNode;
 }) {
-  const { localStream, remoteStream, status } = usePeerStore();
-  const hasActiveMedia = !!(localStream || remoteStream);
-  // Only show the fullscreen video overlay when there is real media.
-  // Text-only chat sets status='connected' but has no streams — keep it on
-  // the dashboard instead of launching a black video screen.
+  const { localStream, remoteStream, status, hasLocalVideo, hasRemoteVideo } =
+    usePeerStore();
+  const hasAnyVideo = hasLocalVideo || hasRemoteVideo;
+  const hasAnyMedia = !!(localStream || remoteStream);
+  // Only show the fullscreen call overlay while a real call is in progress.
+  // Text-only chat keeps the UI on the dashboard, but audio/video calls still
+  // need the call controls even when no camera is available.
   const isMediaCallActive =
-    hasActiveMedia && (status === "calling" || status === "connected");
+    hasAnyMedia && (status === "calling" || status === "connected");
 
   if (!isMediaCallActive) return null;
 
   return (
-    <div className="fixed inset-0 z-40 bg-black flex flex-col">
-      {children}
-    </div>
+    <div className="fixed inset-0 z-40 bg-black flex flex-col">{children}</div>
   );
 }

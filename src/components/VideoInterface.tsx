@@ -17,6 +17,8 @@ export default function VideoInterface() {
     isChatOpen,
     videoFit,
     toggleVideoFit,
+    hasRemoteVideo,
+    hasLocalVideo,
   } = usePeerStore();
   const { endCall } = useCallActions();
 
@@ -30,12 +32,14 @@ export default function VideoInterface() {
   //    the <video> element mounts, regardless of stream timing. ─────────────
   const remoteCallbackRef = useCallback(
     (el: HTMLVideoElement | null) => {
-      (remoteVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+      (
+        remoteVideoRef as React.MutableRefObject<HTMLVideoElement | null>
+      ).current = el;
       if (el && remoteStream && el.srcObject !== remoteStream) {
         el.srcObject = remoteStream;
       }
     },
-    [remoteStream]
+    [remoteStream],
   );
 
   // Also update if stream object reference changes after mount
@@ -55,7 +59,7 @@ export default function VideoInterface() {
       };
       e.preventDefault();
     },
-    [localPos]
+    [localPos],
   );
 
   useEffect(() => {
@@ -79,10 +83,58 @@ export default function VideoInterface() {
 
   if (!remoteStream && !localStream) return null;
 
+  // Audio-only call indicator
+  const isAudioOnlyCall =
+    status === "connected" && !hasRemoteVideo && !hasLocalVideo;
+  const remoteIsAudioOnly =
+    status === "connected" && remoteStream && !hasRemoteVideo;
+  const localIsAudioOnly =
+    status === "connected" && localStream && !hasLocalVideo;
+
+  const connectionLabel =
+    status === "connected"
+      ? hasRemoteVideo
+        ? "Video connected"
+        : "Audio connected"
+      : status === "calling"
+        ? "Connecting…"
+        : "Calling";
+  const connectionSubtext =
+    status === "connected"
+      ? "Connection fully established"
+      : "Waiting for remote peer";
+
   return (
     <div className="relative w-full h-full bg-black flex items-center justify-center">
+      {/* Connection status badge */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+        <div className="rounded-full border border-white/15 bg-slate-950/90 px-4 py-2 text-center backdrop-blur-sm shadow-xl shadow-slate-950/30">
+          <p className="text-xs text-slate-300 uppercase tracking-[0.2em]">
+            {connectionLabel}
+          </p>
+          <p className="text-sm text-white/80">{connectionSubtext}</p>
+        </div>
+      </div>
+
+      {/* Audio-only call overlay */}
+      {isAudioOnlyCall && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-linear-to-br from-slate-900 to-slate-800 z-30">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-32 h-32 rounded-full bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-2xl border-2 border-white/20">
+              <span className="text-6xl">🎙️</span>
+            </div>
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold text-white">Audio Call</h2>
+              <p className="text-white/60 text-sm">
+                Video not available • Sound active
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Remote video - full background */}
-      {remoteStream ? (
+      {remoteStream && hasRemoteVideo ? (
         <video
           ref={remoteCallbackRef}
           autoPlay
@@ -91,6 +143,19 @@ export default function VideoInterface() {
             videoFit === "cover" ? "object-cover" : "object-contain"
           }`}
         />
+      ) : remoteStream && !hasRemoteVideo ? (
+        // Remote audio-only (remote has no camera)
+        <div className="flex flex-col items-center gap-4 text-white/40">
+          <div className="w-32 h-32 rounded-full bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg border-2 border-white/20">
+            <span className="text-5xl">👤</span>
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-lg font-medium">Remote peer is audio-only</p>
+            <p className="text-sm text-white/30">
+              They don't have camera enabled
+            </p>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col items-center gap-4 text-white/40">
           <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center text-5xl">
@@ -107,13 +172,17 @@ export default function VideoInterface() {
           <div className="relative flex items-center justify-center">
             <span className="absolute w-36 h-36 rounded-full bg-indigo-500/15 animate-ping" />
             <span className="absolute w-28 h-28 rounded-full bg-indigo-500/20 animate-ping [animation-delay:200ms]" />
-            <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-xl border-2 border-white/20">
+            <div className="relative w-24 h-24 rounded-full bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-xl border-2 border-white/20">
               <span className="text-4xl">📞</span>
             </div>
           </div>
           <div className="text-center space-y-1">
-            <p className="text-white font-semibold text-xl animate-pulse">Calling…</p>
-            <p className="text-white/50 text-sm">Waiting for the other person to answer</p>
+            <p className="text-white font-semibold text-xl animate-pulse">
+              Calling…
+            </p>
+            <p className="text-white/50 text-sm">
+              Waiting for the other person to answer
+            </p>
           </div>
           <button
             id="btn-cancel-call"
@@ -128,17 +197,19 @@ export default function VideoInterface() {
         </div>
       )}
 
-      {/* Draggable local video PiP — visible during CALLING and CONNECTED */}
-      {localStream && (status === "connected" || status === "calling") && (
-        <LocalPiP
-          localVideoRef={localVideoRef}
-          localStream={localStream}
-          localPos={localPos}
-          setLocalPos={setLocalPos}
-          isCameraOff={isCameraOff}
-          onMouseDown={onMouseDown}
-        />
-      )}
+      {/* Draggable local PiP — visible during CALLING and CONNECTED */}
+      {localStream &&
+        hasLocalVideo &&
+        (status === "connected" || status === "calling") && (
+          <LocalPiP
+            localVideoRef={localVideoRef}
+            localStream={localStream}
+            localPos={localPos}
+            setLocalPos={setLocalPos}
+            isCameraOff={isCameraOff}
+            onMouseDown={onMouseDown}
+          />
+        )}
 
       {/* Control Bar — only shown when fully connected */}
       {status === "connected" && (
@@ -150,27 +221,33 @@ export default function VideoInterface() {
             emoji={isMuted ? "🔇" : "🎤"}
             danger={isMuted}
           />
-          <ControlBtn
-            onClick={toggleCamera}
-            active={isCameraOff}
-            title={isCameraOff ? "Enable Camera" : "Disable Camera"}
-            emoji={isCameraOff ? "📵" : "📷"}
-            danger={isCameraOff}
-          />
-          {/* Divider */}
-          <div className="w-px h-6 bg-white/10" />
+          {hasLocalVideo && (
+            <>
+              <ControlBtn
+                onClick={toggleCamera}
+                active={isCameraOff}
+                title={isCameraOff ? "Enable Camera" : "Disable Camera"}
+                emoji={isCameraOff ? "📵" : "📷"}
+                danger={isCameraOff}
+              />
+              {/* Divider */}
+              <div className="w-px h-6 bg-white/10" />
+            </>
+          )}
           <ControlBtn
             onClick={toggleChat}
             active={isChatOpen}
             title={isChatOpen ? "Close Chat" : "Open Chat"}
             emoji="💬"
           />
-          <ControlBtn
-            onClick={toggleVideoFit}
-            active={videoFit === "cover"}
-            title={videoFit === "cover" ? "Fit Video" : "Fill Video"}
-            emoji={videoFit === "cover" ? "🔲" : "🔳"}
-          />
+          {hasLocalVideo && (
+            <ControlBtn
+              onClick={toggleVideoFit}
+              active={videoFit === "cover"}
+              title={videoFit === "cover" ? "Fit Video" : "Fill Video"}
+              emoji={videoFit === "cover" ? "🔲" : "🔳"}
+            />
+          )}
           {/* Divider */}
           <div className="w-px h-6 bg-white/10" />
           <button
@@ -210,13 +287,15 @@ function LocalPiP({
   // in the store before this subtree appeared in the DOM.
   const videoCallbackRef = useCallback(
     (el: HTMLVideoElement | null) => {
-      (localVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+      (
+        localVideoRef as React.MutableRefObject<HTMLVideoElement | null>
+      ).current = el;
       if (el && el.srcObject !== localStream) {
         el.srcObject = localStream;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [localStream]
+    [localStream],
   );
 
   // ── Touch drag support for mobile ──────────────────────────────────────
@@ -229,7 +308,7 @@ function LocalPiP({
         y: touch.clientY - localPos.y,
       };
     },
-    [localPos]
+    [localPos],
   );
 
   useEffect(() => {
@@ -302,8 +381,8 @@ function ControlBtn({
         active && !danger
           ? "bg-indigo-600/80 hover:bg-indigo-500"
           : danger
-          ? "bg-red-600/80 hover:bg-red-500"
-          : "bg-white/10 hover:bg-white/20"
+            ? "bg-red-600/80 hover:bg-red-500"
+            : "bg-white/10 hover:bg-white/20"
       }`}
     >
       {emoji}

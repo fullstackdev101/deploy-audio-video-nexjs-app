@@ -48,7 +48,7 @@ export default function IncomingCallModal() {
 
       return () => {
         stopped = true;
-        ctx?.close().catch(() => { });
+        ctx?.close().catch(() => {});
       };
     }
   }, [isVisible]);
@@ -62,7 +62,7 @@ export default function IncomingCallModal() {
       role="dialog"
       aria-modal="true"
       aria-label="Incoming call"
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md"
+      className="fixed inset-0 z-100 flex items-center justify-center bg-black/70 backdrop-blur-md"
     >
       {/* Outer ring animation */}
       <div className="relative flex flex-col items-center gap-8">
@@ -73,7 +73,7 @@ export default function IncomingCallModal() {
           <span className="absolute w-24 h-24 rounded-full bg-emerald-500/20 animate-ping [animation-delay:400ms]" />
 
           {/* Avatar */}
-          <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-xl shadow-indigo-900/60 border-2 border-white/20">
+          <div className="relative w-24 h-24 rounded-full bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-xl shadow-indigo-900/60 border-2 border-white/20">
             <span className="text-4xl">👤</span>
           </div>
         </div>

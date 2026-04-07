@@ -29,7 +29,7 @@ function mediaErrorMessage(err: unknown): string {
   }
 }
 
-// ─── Get best available stream: video+audio → video-only → audio-only → throw 
+// ─── Get best available stream: video+audio → video-only → audio-only → throw
 async function getBestStream(): Promise<MediaStream> {
   try {
     // 1. Attempt both video and audio together
@@ -103,6 +103,7 @@ export default function PeerContainer({
     setMediaCall,
     setIncomingCall,
     setStatus,
+    setRemotePeerId,
     addMessage,
     setError,
   } = usePeerStore();
@@ -152,7 +153,7 @@ export default function PeerContainer({
         conn.on("open", () => setDataConnection(conn));
       }
     },
-    [setDataConnection, addMessage, setStatus]
+    [setDataConnection, addMessage, setStatus],
   );
 
   // ── PEER INITIALISATION ────────────────────────────────────────────────────
@@ -199,6 +200,7 @@ export default function PeerContainer({
           return;
         }
         setIncomingCall(call);
+        setRemotePeerId(call.peer);
         setStatus("incoming");
 
         // If the caller hangs up before we answer, clean up automatically
@@ -206,6 +208,7 @@ export default function PeerContainer({
           const s = usePeerStore.getState().status;
           if (s === "incoming") {
             setIncomingCall(null);
+            setRemotePeerId("");
             setStatus("ready");
           }
         });
@@ -213,6 +216,7 @@ export default function PeerContainer({
           const s = usePeerStore.getState().status;
           if (s === "incoming") {
             setIncomingCall(null);
+            setRemotePeerId("");
             setStatus("ready");
           }
         });
@@ -252,7 +256,7 @@ export function useCallActions() {
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(
-        "Media devices are not available. Make sure you are using HTTPS or localhost."
+        "Media devices are not available. Make sure you are using HTTPS or localhost.",
       );
       return;
     }
@@ -267,6 +271,7 @@ export function useCallActions() {
     }
 
     store.setLocalStream(stream);
+    store.setHasLocalVideo(stream.getVideoTracks().length > 0);
     store.setStatus("calling");
 
     // ── Media call ─────────────────────────────────────────────────────────
@@ -283,7 +288,7 @@ export function useCallActions() {
         store.setMediaCall(null);
         store.setStatus("ready");
         store.setError(
-          "No answer. The other peer did not accept the call in time."
+          "No answer. The other peer did not accept the call in time.",
         );
       }
     }, CALL_TIMEOUT_MS);
@@ -291,6 +296,7 @@ export function useCallActions() {
     call.on("stream", (remoteStream) => {
       clearTimeout(timeoutId);
       store.setRemoteStream(remoteStream);
+      store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
     });
     call.on("close", () => {
@@ -327,7 +333,9 @@ export function useCallActions() {
             text: parsed.text,
             timestamp: new Date(),
           });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       });
       conn.on("close", () => store.setDataConnection(null));
       conn.on("error", () => store.setDataConnection(null));
@@ -338,12 +346,12 @@ export function useCallActions() {
 
   // ── ACCEPT INCOMING CALL ────────────────────────────────────────────────────
   const acceptCall = useCallback(async () => {
-    const { incomingCall, peer, setError } = store;
+    const { incomingCall, setError } = store;
     if (!incomingCall) return;
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(
-        "Media devices are not available. Make sure you are using HTTPS or localhost."
+        "Media devices are not available. Make sure you are using HTTPS or localhost.",
       );
       return;
     }
@@ -354,7 +362,6 @@ export function useCallActions() {
     } catch (err) {
       console.error("[PeerLink] acceptCall getUserMedia error:", err);
       store.setError(mediaErrorMessage(err));
-      // Close the call because we can't answer
       incomingCall.close();
       store.setIncomingCall(null);
       store.setStatus("ready");
@@ -362,16 +369,9 @@ export function useCallActions() {
     }
 
     store.setLocalStream(stream);
-    incomingCall.answer(stream);
-    store.setMediaCall(incomingCall);
-    store.setIncomingCall(null);
-    // ⚠️  Do NOT set status='connected' yet — wait for the remote stream
-    // to actually arrive (same pattern as the caller side). Setting it early
-    // causes the UI to say "connected" while ICE is still negotiating, which
-    // hides the real connecting state from the user.
-    store.setStatus("calling"); // show the "Calling…" overlay while ICE runs
+    store.setHasLocalVideo(stream.getVideoTracks().length > 0);
 
-    // Timeout: if the ICE negotiation never completes, give up
+    // Attach event handlers before answering, to avoid missing early events.
     const answererTimeout = setTimeout(() => {
       const s = usePeerStore.getState().status;
       if (s === "calling") {
@@ -381,7 +381,7 @@ export function useCallActions() {
         store.setMediaCall(null);
         store.setStatus("ready");
         store.setError(
-          "Connection timed out. The caller's network may be blocking direct connections."
+          "Connection timed out. The caller's network may be blocking direct connections.",
         );
       }
     }, CALL_TIMEOUT_MS);
@@ -389,7 +389,8 @@ export function useCallActions() {
     incomingCall.on("stream", (remoteStream) => {
       clearTimeout(answererTimeout);
       store.setRemoteStream(remoteStream);
-      store.setStatus("connected"); // ← now we're truly connected
+      store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
+      store.setStatus("connected");
     });
     incomingCall.on("close", () => {
       clearTimeout(answererTimeout);
@@ -408,12 +409,10 @@ export function useCallActions() {
       store.setStatus("ready");
     });
 
-    // ── Data channel for the receiver ─────────────────────────────────────
-    // The CALLER already opened an outbound DataConnection to us. The peer
-    // "connection" event in PeerContainer will fire and wireDataConnection
-    // will register it once it's open. We must NOT open a second outbound
-    // connection here — that creates a duplicate race that causes both sides
-    // to stay stuck on "Establishing chat channel…".
+    incomingCall.answer(stream);
+    store.setMediaCall(incomingCall);
+    store.setIncomingCall(null);
+    store.setStatus("calling");
   }, [store]);
 
   // ── DECLINE INCOMING CALL ───────────────────────────────────────────────────
@@ -434,7 +433,6 @@ export function useCallActions() {
     const conn = peer.connect(remotePeerId, { reliable: true });
     store.setDataConnection(conn);
     store.setStatus("connected");
-    // Open chat panel immediately
     if (!store.isChatOpen) store.toggleChat();
 
     conn.on("data", (raw) => {
@@ -481,8 +479,15 @@ export function useCallActions() {
         timestamp: new Date(),
       });
     },
-    [store]
+    [store],
   );
 
-  return { startCall, acceptCall, declineCall, startTextChat, endCall, sendMessage };
+  return {
+    startCall,
+    acceptCall,
+    declineCall,
+    startTextChat,
+    endCall,
+    sendMessage,
+  };
 }
