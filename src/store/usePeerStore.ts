@@ -116,24 +116,30 @@ export const usePeerStore = create<PeerState>((set, get) => ({
 
   toggleMute: () => {
     const { localStream, isMuted } = get();
-    if (localStream) {
-      // isMuted is the CURRENT state; we're toggling TO the opposite.
-      // If currently muted (isMuted=true) → we want to UN-mute → enable track.
-      // If currently unmuted (isMuted=false) → we want to MUTE → disable track.
-      localStream.getAudioTracks().forEach((t) => (t.enabled = isMuted)); // isMuted=true means "was muted" → enable now
+    if (localStream && localStream.getAudioTracks().length > 0) {
+      // isMuted is visual state: true=shown as muted, false=shown as unmuted
+      // track.enabled is actual state: false=no audio, true=audio flowing
+      // They should be OPPOSITE: enabled = !isMuted
+      const newMutedState = !isMuted;
+      localStream.getAudioTracks().forEach((t) => {
+        t.enabled = !newMutedState; // If muting, disable tracks. If unmuting, enable tracks.
+      });
+      set({ isMuted: newMutedState });
     }
-    set({ isMuted: !isMuted });
   },
 
   toggleCamera: () => {
     const { localStream, isCameraOff } = get();
-    if (localStream) {
-      // isCameraOff is the CURRENT state; we're toggling TO the opposite.
-      // If camera is off (isCameraOff=true) → enabling → set enabled=true.
-      // If camera is on (isCameraOff=false) → disabling → set enabled=false.
-      localStream.getVideoTracks().forEach((t) => (t.enabled = isCameraOff)); // isCameraOff=true means "was off" → enable now
+    if (localStream && localStream.getVideoTracks().length > 0) {
+      // isCameraOff is visual state: true=shown as off, false=shown as on
+      // track.enabled is actual state: false=no video, true=video flowing
+      // They should be OPPOSITE: enabled = !isCameraOff
+      const newCameraOffState = !isCameraOff;
+      localStream.getVideoTracks().forEach((t) => {
+        t.enabled = !newCameraOffState; // If turning off, disable tracks. If turning on, enable tracks.
+      });
+      set({ isCameraOff: newCameraOffState });
     }
-    set({ isCameraOff: !isCameraOff });
   },
 
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),

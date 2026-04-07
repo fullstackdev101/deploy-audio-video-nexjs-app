@@ -32,7 +32,7 @@ function mediaErrorMessage(err: unknown): string {
 // ─── Get best available stream: video+audio → video-only → audio-only → throw
 async function getBestStream(): Promise<MediaStream> {
   try {
-    // 1. Attempt both video and audio together
+    // 1. Attempt both video and audio with broad compatibility
     return await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true,
@@ -44,19 +44,35 @@ async function getBestStream(): Promise<MediaStream> {
       throw err;
     }
 
-    console.warn("Combined video+audio failed. Attempting fallbacks:", err);
+    console.warn(
+      "[PeerLink] Combined video+audio failed. Attempting fallbacks:",
+      err,
+    );
 
-    // 2. Fallback to video-only (e.g., camera exists, but NO microphone)
+    // 2. Fallback to video-only with minimal constraints for broad camera support
     try {
+      console.log("[PeerLink] Attempting video-only fallback...");
       return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: true, // Minimal constraints for broader camera compatibility
       });
     } catch (videoErr) {
+      console.warn(
+        "[PeerLink] Video-only fallback failed. Attempting audio-only:",
+        videoErr,
+      );
+
       // 3. Fallback to audio-only (e.g., microphone exists, but NO camera)
       try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log("[PeerLink] Attempting audio-only fallback...");
+        const audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        console.log("[PeerLink] Audio-only fallback successful.");
+        return audioStream;
       } catch (audioErr) {
         // If everything fails, throw the original error to display in the UI
+        console.error("[PeerLink] All media access attempts failed:", err);
         throw err;
       }
     }
@@ -323,6 +339,29 @@ export function useCallActions() {
       // Only register as ready once open
       conn.on("open", () => store.setDataConnection(conn));
     });
+
+    // ── Handle call close on caller side (when receiver hangs up) ──────────────────────────
+    call.on("close", () => {
+      clearTimeout(timeoutId);
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+      console.log("[PeerLink] Call closed by remote peer");
+    });
+
+    // ── Handle call errors on caller side ─────────────────────────────────────────────────
+    call.on("error", (err) => {
+      clearTimeout(timeoutId);
+      console.error("[PeerLink] Caller-side call error:", err);
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setRemoteStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+      store.setError("Call connection error. Please try again.");
+    });
   }, [store]);
 
   // ── ACCEPT INCOMING CALL ────────────────────────────────────────────────────
@@ -441,13 +480,27 @@ export function useCallActions() {
   // ── END CALL / DISCONNECT ───────────────────────────────────────────────────
   const endCall = useCallback(() => {
     const { mediaCall, dataConnection, localStream, incomingCall } = store;
+
+    // Close connections (this triggers close events on both sides via PeerJS signaling)
     mediaCall?.close();
     dataConnection?.close();
     incomingCall?.close();
-    // Stop all local tracks explicitly before reset
-    localStream?.getTracks().forEach((t) => t.stop());
-    store.setLocalStream(null);
-    store.reset();
+
+    // Stop local tracks
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+    }
+
+    // Reset will be called by the close event handlers on both sides.
+    // We clear immediate state to prevent race conditions.
+    store.setStatus("ready");
+    store.setRemoteStream(null);
+    store.setMediaCall(null);
+    store.setDataConnection(null);
+    store.setIncomingCall(null);
+    store.setHasRemoteVideo(false);
+    store.setHasLocalVideo(false);
   }, [store]);
 
   // ── SEND MESSAGE ────────────────────────────────────────────────────────────
