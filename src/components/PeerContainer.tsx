@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useCallback, useRef } from "react";
-import { usePeerStore, ChatMessage } from "@/store/usePeerStore";
+import {
+  usePeerStore,
+  ChatMessage,
+  type ConnectionStatus,
+} from "@/store/usePeerStore";
 import type Peer from "peerjs";
 import type { DataConnection, MediaConnection } from "peerjs";
 
