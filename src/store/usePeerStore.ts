@@ -45,6 +45,8 @@ interface PeerState {
   isChatOpen: boolean;
   videoFit: "cover" | "contain";
   errorMessage: string;
+  /** True when we accepted an incoming call (receiver side) */
+  isAnswering: boolean;
 
   // Actions
   setPeer: (peer: Peer) => void;
@@ -56,6 +58,7 @@ interface PeerState {
   setIncomingCall: (call: MediaConnection | null) => void;
   setStatus: (status: ConnectionStatus) => void;
   setRemotePeerId: (id: string) => void;
+  setIsAnswering: (v: boolean) => void;
   addMessage: (msg: ChatMessage) => void;
   toggleMute: () => void;
   toggleCamera: () => void;
@@ -81,6 +84,7 @@ const initialState = {
   isChatOpen: false,
   videoFit: "cover" as const,
   errorMessage: "",
+  isAnswering: false,
 };
 
 export const usePeerStore = create<PeerState>((set, get) => ({
@@ -95,6 +99,7 @@ export const usePeerStore = create<PeerState>((set, get) => ({
   setIncomingCall: (call) => set({ incomingCall: call }),
   setStatus: (status) => set({ status }),
   setRemotePeerId: (id) => set({ remotePeerId: id }),
+  setIsAnswering: (v) => set({ isAnswering: v }),
 
   addMessage: (msg) =>
     set((state) => ({ chatHistory: [...state.chatHistory, msg] })),
@@ -146,6 +151,7 @@ export const usePeerStore = create<PeerState>((set, get) => ({
         isCameraOff: false,
         isChatOpen: false,
         errorMessage: "",
+        isAnswering: false,
       };
     }),
 }));

@@ -29,29 +29,65 @@ function mediaErrorMessage(err: unknown): string {
   }
 }
 
-// ─── Get best available stream: video+audio → audio-only → throw ─────────────
+// ─── Get best available stream: video+audio → video-only → audio-only → throw 
 async function getBestStream(): Promise<MediaStream> {
   try {
+    // 1. Attempt both video and audio together
     return await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true,
     });
-  } catch (videoErr) {
-    const name = (videoErr as Error).name;
+  } catch (err) {
+    const name = (err as Error).name;
+    // If the user explicitly denied permission, don't attempt fallbacks
     if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-      throw videoErr;
+      throw err;
     }
+
+    console.warn("Combined video+audio failed. Attempting fallbacks:", err);
+
+    // 2. Fallback to video-only (e.g., camera exists, but NO microphone)
     try {
-      console.warn("Video unavailable, falling back to audio-only:", videoErr);
-      return await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (audioErr) {
-      throw videoErr ?? audioErr;
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+    } catch (videoErr) {
+      // 3. Fallback to audio-only (e.g., microphone exists, but NO camera)
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (audioErr) {
+        // If everything fails, throw the original error to display in the UI
+        throw err;
+      }
     }
   }
 }
 
-// ─── How long the caller waits before giving up (ms) ─────────────────────────
+// ─── How long each side waits for the remote stream before giving up (ms) ─────
 const CALL_TIMEOUT_MS = 60_000;
+
+// ─── ICE servers ──────────────────────────────────────────────────────────────
+// We include several public STUN servers plus the free Open Relay TURN service.
+// TURN is essential for peers behind symmetric NAT / corporate firewalls —
+// without it, WebRTC degrades to "connecting forever" for those users.
+const ICE_SERVERS: RTCIceServer[] = [
+  // Google STUN
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
+  // Open Relay — free public TURN (no signup required, rate-limited)
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
 
 export default function PeerContainer({
   children,
@@ -127,7 +163,10 @@ export default function PeerContainer({
       setStatus("initializing");
       const { default: PeerJS } = await import("peerjs");
 
-      peerInstance = new PeerJS(undefined as unknown as string, { debug: 1 });
+      peerInstance = new PeerJS(undefined as unknown as string, {
+        debug: 1,
+        config: { iceServers: ICE_SERVERS, iceTransportPolicy: "all" },
+      });
       peerRef.current = peerInstance;
       setPeer(peerInstance);
 
@@ -326,12 +365,34 @@ export function useCallActions() {
     incomingCall.answer(stream);
     store.setMediaCall(incomingCall);
     store.setIncomingCall(null);
-    store.setStatus("connected");
+    // ⚠️  Do NOT set status='connected' yet — wait for the remote stream
+    // to actually arrive (same pattern as the caller side). Setting it early
+    // causes the UI to say "connected" while ICE is still negotiating, which
+    // hides the real connecting state from the user.
+    store.setStatus("calling"); // show the "Calling…" overlay while ICE runs
+
+    // Timeout: if the ICE negotiation never completes, give up
+    const answererTimeout = setTimeout(() => {
+      const s = usePeerStore.getState().status;
+      if (s === "calling") {
+        incomingCall.close();
+        stream.getTracks().forEach((t) => t.stop());
+        store.setLocalStream(null);
+        store.setMediaCall(null);
+        store.setStatus("ready");
+        store.setError(
+          "Connection timed out. The caller's network may be blocking direct connections."
+        );
+      }
+    }, CALL_TIMEOUT_MS);
 
     incomingCall.on("stream", (remoteStream) => {
+      clearTimeout(answererTimeout);
       store.setRemoteStream(remoteStream);
+      store.setStatus("connected"); // ← now we're truly connected
     });
     incomingCall.on("close", () => {
+      clearTimeout(answererTimeout);
       stream.getTracks().forEach((t) => t.stop());
       store.setLocalStream(null);
       store.setRemoteStream(null);
@@ -339,6 +400,7 @@ export function useCallActions() {
       store.setStatus("ready");
     });
     incomingCall.on("error", () => {
+      clearTimeout(answererTimeout);
       stream.getTracks().forEach((t) => t.stop());
       store.setLocalStream(null);
       store.setRemoteStream(null);

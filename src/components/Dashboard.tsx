@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePeerStore } from "@/store/usePeerStore";
 import { useCallActions } from "@/components/PeerContainer";
 
@@ -17,12 +17,22 @@ export default function Dashboard() {
   } = usePeerStore();
   const { startCall, startTextChat, endCall } = useCallActions();
   const [copied, setCopied] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const copyId = async () => {
     await navigator.clipboard.writeText(myId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Prevent hydration mismatch when using Zustand state
+  if (!mounted) {
+    return null; // Or a loading skeleton
+  }
 
   const isConnected = status === "connected";
   const isBusy =
