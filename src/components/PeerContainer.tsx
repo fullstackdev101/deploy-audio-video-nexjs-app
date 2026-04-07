@@ -104,6 +104,8 @@ export default function PeerContainer({
     setIncomingCall,
     setStatus,
     setRemotePeerId,
+    setHasRemoteVideo,
+    setHasLocalVideo,
     addMessage,
     setError,
   } = usePeerStore();
@@ -298,31 +300,10 @@ export function useCallActions() {
       store.setRemoteStream(remoteStream);
       store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
-    });
-    call.on("close", () => {
-      clearTimeout(timeoutId);
-      stream.getTracks().forEach((t) => t.stop());
-      store.setLocalStream(null);
-      store.setRemoteStream(null);
-      store.setMediaCall(null);
-      store.setStatus("ready");
-    });
-    call.on("error", (err) => {
-      clearTimeout(timeoutId);
-      console.error("[PeerLink] call error:", err);
-      stream.getTracks().forEach((t) => t.stop());
-      store.setLocalStream(null);
-      store.setRemoteStream(null);
-      store.setMediaCall(null);
-      store.setStatus("ready");
-    });
 
-    // ── Open data channel alongside the video call ───────────────────────────
-    // The caller always opens ONE outbound DataConnection. The receiver will get
-    // it via the peer "connection" event and wireDataConnection will handle it.
-    // We do NOT store it until "open" fires to avoid the race where the UI
-    // shows "Establishing chat channel…" indefinitely.
-    {
+      // ── Open data channel after media connection is established ───────────────────────────
+      // The caller opens ONE outbound DataConnection after media is connected.
+      // The receiver will get it via the peer "connection" event.
       const conn = peer.connect(remotePeerId, { reliable: true });
       conn.on("data", (raw) => {
         try {
@@ -341,12 +322,12 @@ export function useCallActions() {
       conn.on("error", () => store.setDataConnection(null));
       // Only register as ready once open
       conn.on("open", () => store.setDataConnection(conn));
-    }
+    });
   }, [store]);
 
   // ── ACCEPT INCOMING CALL ────────────────────────────────────────────────────
   const acceptCall = useCallback(async () => {
-    const { incomingCall, setError } = store;
+    const { incomingCall, peer, remotePeerId, setError } = store;
     if (!incomingCall) return;
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -400,8 +381,9 @@ export function useCallActions() {
       store.setMediaCall(null);
       store.setStatus("ready");
     });
-    incomingCall.on("error", () => {
+    incomingCall.on("error", (err) => {
       clearTimeout(answererTimeout);
+      console.error("[PeerLink] acceptCall error:", err);
       stream.getTracks().forEach((t) => t.stop());
       store.setLocalStream(null);
       store.setRemoteStream(null);
@@ -412,7 +394,9 @@ export function useCallActions() {
     incomingCall.answer(stream);
     store.setMediaCall(incomingCall);
     store.setIncomingCall(null);
-    store.setStatus("calling");
+    store.setStatus("calling"); // Receiver is now in calling state while connecting
+
+    // Data connection will be established by the caller and received via peer "connection" event
   }, [store]);
 
   // ── DECLINE INCOMING CALL ───────────────────────────────────────────────────
