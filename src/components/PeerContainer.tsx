@@ -129,51 +129,6 @@ export default function PeerContainer({
   const peerRef = useRef<Peer | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  // ── Wire up a data connection (used by both caller & receiver) ──────────────
-  // NOTE: We only register the connection in the store AFTER it is open so that
-  // ChatInterface's `canSend` guard (dataConnection && status==='connected')
-  // only becomes true once the channel is actually ready to send.
-  const wireDataConnection = useCallback(
-    (conn: DataConnection) => {
-      const onData = (raw: unknown) => {
-        try {
-          const parsed = JSON.parse(raw as string) as { text: string };
-          const msg: ChatMessage = {
-            id: crypto.randomUUID(),
-            from: "them",
-            text: parsed.text,
-            timestamp: new Date(),
-          };
-          addMessage(msg);
-        } catch {
-          /* ignore malformed */
-        }
-      };
-      const onClose = () => {
-        setDataConnection(null);
-        // Only drop back to ready if we are not mid-call
-        const s = usePeerStore.getState().status;
-        if (s !== "connected" && s !== "calling") {
-          setStatus("ready");
-        }
-      };
-
-      conn.on("data", onData);
-      conn.on("close", onClose);
-      conn.on("error", () => setDataConnection(null));
-
-      // Only mark connection as ready once the channel is actually open.
-      // If already open (e.g. the caller side receives its own outbound conn
-      // back), set it immediately.
-      if (conn.open) {
-        setDataConnection(conn);
-      } else {
-        conn.on("open", () => setDataConnection(conn));
-      }
-    },
-    [setDataConnection, addMessage, setStatus],
-  );
-
   // ── PEER INITIALISATION ────────────────────────────────────────────────────
   useEffect(() => {
     let peerInstance: Peer;
@@ -202,7 +157,8 @@ export default function PeerContainer({
         if (existing && existing !== conn) {
           existing.close();
         }
-        wireDataConnection(conn);
+        // Use the standardized setup for consistency with caller side
+        setupDataConnection(conn, addMessage, setDataConnection, setStatus);
       });
 
       // ── Incoming media call: DON'T auto-answer — park it for the user ──
@@ -262,6 +218,60 @@ export default function PeerContainer({
   return <>{children}</>;
 }
 
+// ─── Standard data connection setup (used by both caller and receiver) ────────
+function setupDataConnection(
+  conn: DataConnection,
+  addMessage: (msg: ChatMessage) => void,
+  setDataConnection: (conn: DataConnection | null) => void,
+  setStatus: (status: ConnectionStatus) => void,
+): void {
+  console.log("[PeerLink] Setting up data connection with peer:", conn.peer);
+
+  const onData = (raw: unknown) => {
+    try {
+      const parsed = JSON.parse(raw as string) as { text: string };
+      const msg: ChatMessage = {
+        id: crypto.randomUUID(),
+        from: "them",
+        text: parsed.text,
+        timestamp: new Date(),
+      };
+      addMessage(msg);
+    } catch {
+      /* ignore malformed */
+    }
+  };
+  const onClose = () => {
+    console.log("[PeerLink] Data connection closed");
+    setDataConnection(null);
+    // Only drop back to ready if we are not mid-call
+    const s = usePeerStore.getState().status;
+    if (s !== "connected" && s !== "calling") {
+      setStatus("ready");
+    }
+  };
+
+  conn.on("data", onData);
+  conn.on("close", onClose);
+  conn.on("error", (err) => {
+    console.warn("[PeerLink] Data connection error:", err);
+    setDataConnection(null);
+  });
+
+  // Only mark connection as ready once it's actually open.
+  // Handle both cases: already open or will open soon.
+  if (conn.open) {
+    console.log("[PeerLink] Data connection already open");
+    setDataConnection(conn);
+  } else {
+    console.log("[PeerLink] Waiting for data connection to open...");
+    conn.on("open", () => {
+      console.log("[PeerLink] Data connection opened successfully");
+      setDataConnection(conn);
+    });
+  }
+}
+
 // ─── Exported call-action hooks ────────────────────────────────────────────────
 
 export function useCallActions() {
@@ -271,6 +281,8 @@ export function useCallActions() {
   const startCall = useCallback(async () => {
     const { peer, remotePeerId, setError } = store;
     if (!peer || !remotePeerId) return;
+
+    console.log("[PeerLink] Starting call to:", remotePeerId);
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(
@@ -288,11 +300,19 @@ export function useCallActions() {
       return;
     }
 
+    console.log(
+      "[PeerLink] Got local stream. Video tracks:",
+      stream.getVideoTracks().length,
+      "Audio tracks:",
+      stream.getAudioTracks().length,
+    );
+
     store.setLocalStream(stream);
     store.setHasLocalVideo(stream.getVideoTracks().length > 0);
     store.setStatus("calling");
 
     // ── Media call ─────────────────────────────────────────────────────────
+    console.log("[PeerLink] Making media call to:", remotePeerId);
     const call = peer.call(remotePeerId, stream);
     store.setMediaCall(call);
 
@@ -300,6 +320,7 @@ export function useCallActions() {
     const timeoutId = setTimeout(() => {
       const s = usePeerStore.getState().status;
       if (s === "calling") {
+        console.warn("[PeerLink] Caller timed out waiting for answer");
         call.close();
         stream.getTracks().forEach((t) => t.stop());
         store.setLocalStream(null);
@@ -313,6 +334,10 @@ export function useCallActions() {
 
     call.on("stream", (remoteStream) => {
       clearTimeout(timeoutId);
+      console.log(
+        "[PeerLink] Caller got remote stream. Video tracks:",
+        remoteStream.getVideoTracks().length,
+      );
       store.setRemoteStream(remoteStream);
       store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
@@ -320,35 +345,25 @@ export function useCallActions() {
       // ── Open data channel after media connection is established ───────────────────────────
       // The caller opens ONE outbound DataConnection after media is connected.
       // The receiver will get it via the peer "connection" event.
+      console.log("[PeerLink] Caller: creating data connection...");
       const conn = peer.connect(remotePeerId, { reliable: true });
-      conn.on("data", (raw) => {
-        try {
-          const parsed = JSON.parse(raw as string) as { text: string };
-          store.addMessage({
-            id: crypto.randomUUID(),
-            from: "them",
-            text: parsed.text,
-            timestamp: new Date(),
-          });
-        } catch {
-          /* ignore */
-        }
-      });
-      conn.on("close", () => store.setDataConnection(null));
-      conn.on("error", () => store.setDataConnection(null));
-      // Only register as ready once open
-      conn.on("open", () => store.setDataConnection(conn));
+      setupDataConnection(
+        conn,
+        store.addMessage,
+        store.setDataConnection,
+        store.setStatus,
+      );
     });
 
     // ── Handle call close on caller side (when receiver hangs up) ──────────────────────────
     call.on("close", () => {
       clearTimeout(timeoutId);
+      console.log("[PeerLink] Caller: call closed by remote peer");
       stream.getTracks().forEach((t) => t.stop());
       store.setLocalStream(null);
       store.setRemoteStream(null);
       store.setMediaCall(null);
       store.setStatus("ready");
-      console.log("[PeerLink] Call closed by remote peer");
     });
 
     // ── Handle call errors on caller side ─────────────────────────────────────────────────
@@ -369,6 +384,8 @@ export function useCallActions() {
     const { incomingCall, peer, remotePeerId, setError } = store;
     if (!incomingCall) return;
 
+    console.log("[PeerLink] Accepting incoming call from:", incomingCall.peer);
+
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(
         "Media devices are not available. Make sure you are using HTTPS or localhost.",
@@ -388,6 +405,13 @@ export function useCallActions() {
       return;
     }
 
+    console.log(
+      "[PeerLink] Got local stream. Video tracks:",
+      stream.getVideoTracks().length,
+      "Audio tracks:",
+      stream.getAudioTracks().length,
+    );
+
     store.setLocalStream(stream);
     store.setHasLocalVideo(stream.getVideoTracks().length > 0);
 
@@ -395,6 +419,7 @@ export function useCallActions() {
     const answererTimeout = setTimeout(() => {
       const s = usePeerStore.getState().status;
       if (s === "calling") {
+        console.warn("[PeerLink] Receiver timed out waiting for remote stream");
         incomingCall.close();
         stream.getTracks().forEach((t) => t.stop());
         store.setLocalStream(null);
@@ -408,12 +433,17 @@ export function useCallActions() {
 
     incomingCall.on("stream", (remoteStream) => {
       clearTimeout(answererTimeout);
+      console.log(
+        "[PeerLink] Receiver got remote stream. Video tracks:",
+        remoteStream.getVideoTracks().length,
+      );
       store.setRemoteStream(remoteStream);
       store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
     });
     incomingCall.on("close", () => {
       clearTimeout(answererTimeout);
+      console.log("[PeerLink] Receiver: incoming call closed");
       stream.getTracks().forEach((t) => t.stop());
       store.setLocalStream(null);
       store.setRemoteStream(null);
@@ -430,6 +460,7 @@ export function useCallActions() {
       store.setStatus("ready");
     });
 
+    console.log("[PeerLink] Answering call...");
     incomingCall.answer(stream);
     store.setMediaCall(incomingCall);
     store.setIncomingCall(null);
@@ -453,28 +484,16 @@ export function useCallActions() {
     const { peer, remotePeerId } = store;
     if (!peer || !remotePeerId) return;
 
+    console.log("[PeerLink] Starting text-only chat with:", remotePeerId);
     const conn = peer.connect(remotePeerId, { reliable: true });
-    store.setDataConnection(conn);
+    setupDataConnection(
+      conn,
+      store.addMessage,
+      store.setDataConnection,
+      store.setStatus,
+    );
     store.setStatus("connected");
     if (!store.isChatOpen) store.toggleChat();
-
-    conn.on("data", (raw) => {
-      try {
-        const parsed = JSON.parse(raw as string) as { text: string };
-        store.addMessage({
-          id: crypto.randomUUID(),
-          from: "them",
-          text: parsed.text,
-          timestamp: new Date(),
-        });
-      } catch {
-        /* ignore */
-      }
-    });
-    conn.on("close", () => {
-      store.setDataConnection(null);
-      store.setStatus("ready");
-    });
   }, [store]);
 
   // ── END CALL / DISCONNECT ───────────────────────────────────────────────────
