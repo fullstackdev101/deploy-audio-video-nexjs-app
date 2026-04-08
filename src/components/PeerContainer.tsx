@@ -267,7 +267,7 @@ function setupDataConnection(
   setDataConnection: (conn: DataConnection | null) => void,
   setStatus: (status: ConnectionStatus) => void,
 ): void {
-  console.log("[PeerLink] Setting up data connection with peer:", conn.peer);
+  console.log("[PeerLink] Setting up data connection with peer:::", conn.peer);
 
   const onData = (raw: unknown) => {
     try {
