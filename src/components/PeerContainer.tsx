@@ -87,26 +87,61 @@ async function getBestStream(): Promise<MediaStream> {
 const CALL_TIMEOUT_MS = 60_000;
 
 // ─── ICE servers ──────────────────────────────────────────────────────────────
-// We include several public STUN servers plus the free Open Relay TURN service.
+// We include several public STUN servers plus a TURN relay.
 // TURN is essential for peers behind symmetric NAT / corporate firewalls —
-// without it, WebRTC degrades to "connecting forever" for those users.
-const ICE_SERVERS: RTCIceServer[] = [
-  // Google STUN
+// without it, WebRTC can stall or never finish connecting.
+const STUN_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
   { urls: "stun:stun3.l.google.com:19302" },
   { urls: "stun:stun4.l.google.com:19302" },
-  // Open Relay — free public TURN (no signup required, rate-limited)
-  {
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turn:openrelay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
+];
+
+const TURN_SERVER_HOST = process.env.NEXT_PUBLIC_TURN_HOST;
+const TURN_SERVER_USER = process.env.NEXT_PUBLIC_TURN_USER;
+const TURN_SERVER_PASS = process.env.NEXT_PUBLIC_TURN_PASS;
+
+function normalizeTurnHost(host: string): string {
+  return host.replace(/^(turn:|turns:)(\/\/)?/, "");
+}
+
+const configuredTurnServers: RTCIceServer[] =
+  TURN_SERVER_HOST && TURN_SERVER_USER && TURN_SERVER_PASS
+    ? [
+        {
+          urls: [
+            `turn:${normalizeTurnHost(TURN_SERVER_HOST)}:3478?transport=udp`,
+            `turn:${normalizeTurnHost(TURN_SERVER_HOST)}:3478?transport=tcp`,
+            `turns:${normalizeTurnHost(TURN_SERVER_HOST)}:5349?transport=tcp`,
+          ],
+          username: TURN_SERVER_USER,
+          credential: TURN_SERVER_PASS,
+        },
+      ]
+    : [];
+
+if (!configuredTurnServers.length) {
+  console.warn(
+    "[PeerLink] TURN env not configured. Falling back to openrelay public TURN relay. This may fail on restrictive networks.",
+  );
+}
+
+const ICE_SERVERS: RTCIceServer[] = [
+  ...STUN_SERVERS,
+  ...(configuredTurnServers.length > 0
+    ? configuredTurnServers
+    : [
+        {
+          urls: [
+            "turn:openrelay.metered.ca:80",
+            "turn:openrelay.metered.ca:443",
+            "turn:openrelay.metered.ca:443?transport=tcp",
+          ],
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+      ]),
 ];
 
 export default function PeerContainer({
