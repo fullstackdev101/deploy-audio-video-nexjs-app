@@ -103,7 +103,10 @@ const TURN_SERVER_USER = process.env.NEXT_PUBLIC_TURN_USER;
 const TURN_SERVER_PASS = process.env.NEXT_PUBLIC_TURN_PASS;
 
 function normalizeTurnHost(host: string): string {
-  return host.replace(/^(turn:|turns:)(\/\/)?/, "");
+  // Strip scheme (turn:, turns:, //) and any existing port
+  return host
+    .replace(/^(turn:|turns:)(\/\/)?/, "") // Remove scheme
+    .replace(/:\d+(\?|$)/, "$1"); // Remove port if present
 }
 
 const configuredTurnServers: RTCIceServer[] =
@@ -500,10 +503,22 @@ export function useCallActions() {
     });
 
     console.log("[PeerLink] Answering call...");
-    incomingCall.answer(stream);
-    store.setMediaCall(incomingCall);
-    store.setIncomingCall(null);
-    store.setStatus("calling"); // Receiver is now in calling state while connecting
+    try {
+      incomingCall.answer(stream);
+      store.setMediaCall(incomingCall);
+      store.setIncomingCall(null);
+      store.setStatus("calling"); // Receiver is now in calling state while connecting
+      console.log("[PeerLink] Call answered successfully");
+    } catch (err) {
+      console.error("[PeerLink] Error answering call:", err);
+      stream.getTracks().forEach((t) => t.stop());
+      store.setLocalStream(null);
+      store.setMediaCall(null);
+      store.setStatus("ready");
+      store.setError(
+        "Failed to answer call. Check browser console and ensure connection is stable.",
+      );
+    }
 
     // Data connection will be established by the caller and received via peer "connection" event
   }, [store]);
