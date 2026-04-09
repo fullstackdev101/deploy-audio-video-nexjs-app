@@ -6,6 +6,7 @@ import {
   ChatMessage,
   type ConnectionStatus,
 } from "@/store/usePeerStore";
+import { useGroupStore } from "@/store/useGroupStore";
 import type Peer from "peerjs";
 import type { DataConnection } from "peerjs";
 
@@ -253,6 +254,8 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
 
       // Incoming data connection (receiver side — caller opens this after media connects)
       peerInstance.on("connection", (conn) => {
+        // Skip if group mode is active — GroupPeerContainer handles it
+        if (useGroupStore.getState().groupStatus === "in-room") return;
         console.log("[PeerLink] Incoming data connection from:", conn.peer);
         const existing = usePeerStore.getState().dataConnection;
         if (existing && existing !== conn) existing.close();
@@ -261,6 +264,8 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
 
       // Incoming media call — park for user to accept/decline
       peerInstance.on("call", (call) => {
+        // Skip if group mode is active — GroupPeerContainer handles it
+        if (useGroupStore.getState().groupStatus === "in-room") return;
         const currentStatus = usePeerStore.getState().status;
         if (currentStatus === "connected" || currentStatus === "calling" || currentStatus === "incoming") {
           call.close();

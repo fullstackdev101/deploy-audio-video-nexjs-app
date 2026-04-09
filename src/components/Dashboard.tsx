@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { usePeerStore } from "@/store/usePeerStore";
 import { useCallActions } from "@/components/PeerContainer";
 
-export default function Dashboard() {
+export default function Dashboard({ onSwitchToGroup }: { onSwitchToGroup?: () => void }) {
   const {
     myId,
     status,
@@ -202,6 +202,25 @@ export default function Dashboard() {
               variant="secondary"
             />
           </div>
+
+          {/* Group call mode switcher */}
+          {!isBusy && onSwitchToGroup && (
+            <button
+              id="btn-group-call"
+              onClick={onSwitchToGroup}
+              disabled={!isReady}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl
+                bg-gradient-to-r from-violet-600/30 to-indigo-600/30 hover:from-violet-600/50 hover:to-indigo-600/50
+                border border-violet-500/20 hover:border-violet-500/40
+                text-violet-300 hover:text-white font-medium text-sm
+                transition-all duration-200 hover:scale-105 active:scale-95
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+            >
+              <span>👥</span>
+              Group Video Call
+              <span className="ml-1 text-[10px] bg-violet-500/30 text-violet-200 px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wider">New</span>
+            </button>
+          )}
 
           {isBusy && (
             <CallButton
