@@ -57,6 +57,21 @@ const PEER_CONFIG: RTCConfiguration = {
   iceCandidatePoolSize: 10,
 };
 
+// ── Startup diagnostics for group module ──────────────────────────────────────
+if (typeof window !== "undefined") {
+  if (hasPrivateTurn) {
+    console.log(
+      `%c[GroupPeer] ✅ TURN: using metered.ca private credentials (user: ${TURN_USER.slice(0, 8)}…)`,
+      "color:#22c55e;font-weight:bold",
+    );
+  } else {
+    console.warn(
+      "%c[GroupPeer] ⚠️ TURN: public openrelay only — group calls on restrictive networks may fail.",
+      "color:#f59e0b;font-weight:bold",
+    );
+  }
+}
+
 // ─── Best-effort media stream ─────────────────────────────────────────────────
 async function getBestStream(): Promise<MediaStream> {
   try {
@@ -64,13 +79,21 @@ async function getBestStream(): Promise<MediaStream> {
       video: { width: { ideal: 640 }, height: { ideal: 480 } },
       audio: true,
     });
-  } catch {
+  } catch (err) {
+    const name = (err as Error).name;
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") throw err;
+    console.warn("[GroupPeer] Combined video+audio failed, trying fallbacks:", err);
     try {
+      console.log("[GroupPeer] Attempting video-only…");
       return await navigator.mediaDevices.getUserMedia({ video: true });
     } catch {
+      console.warn("[GroupPeer] Video-only failed. Attempting audio-only…");
       try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } catch (err) {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        console.log("[GroupPeer] ✅ Audio-only fallback successful.");
+        return s;
+      } catch {
+        console.error("[GroupPeer] All media access attempts failed.");
         throw err;
       }
     }
@@ -105,17 +128,23 @@ export default function GroupPeerContainer({ children }: { children: React.React
 
       console.log("[GroupPeer] Installing group handlers on existing Peer");
 
-      // Incoming call: if we're in a group room, auto-answer from any peer
-      // that sent us a join-room message (i.e. they're in our participants map).
+      // Incoming call: if we're in a group room, auto-answer with our local stream.
       peer.on("call", (call: MediaConnection) => {
         const gs = useGroupStore.getState();
         if (gs.groupStatus !== "in-room") return; // not our concern
 
         const remotePeerId = call.peer;
-        console.log(`[GroupPeer] Incoming call from ${remotePeerId} — auto-answering for group`);
+        const localStream = gs.localStream;
 
-        const localStream = gs.localStream ?? new MediaStream();
-        call.answer(localStream);
+        if (!localStream || localStream.getTracks().length === 0) {
+          console.warn(`[GroupPeer] Incoming call from ${remotePeerId} but no local stream — answering with empty stream`);
+        }
+
+        const answerStream = localStream ?? new MediaStream();
+        console.log(
+          `[GroupPeer] Incoming call from ${remotePeerId} — auto-answering (tracks: ${answerStream.getTracks().length}, video: ${answerStream.getVideoTracks().length}, audio: ${answerStream.getAudioTracks().length})`,
+        );
+        call.answer(answerStream);
 
         // Add participant if not already tracked
         if (!gs.participants.has(remotePeerId)) {
@@ -130,10 +159,17 @@ export default function GroupPeerContainer({ children }: { children: React.React
             isMuted: false,
             joinedAt: new Date(),
           });
+        } else {
+          // Update existing participant with new call reference
+          useGroupStore.getState().updateParticipant(remotePeerId, {
+            mediaCall: call,
+          });
         }
 
         call.on("stream", (remoteStream: MediaStream) => {
-          console.log(`[GroupPeer] ✅ Got remote stream from ${remotePeerId}`);
+          console.log(
+            `[GroupPeer] ✅ Got remote stream from ${remotePeerId} (video: ${remoteStream.getVideoTracks().length}, audio: ${remoteStream.getAudioTracks().length})`,
+          );
           useGroupStore.getState().updateParticipant(remotePeerId, {
             remoteStream,
             mediaCall: call,
@@ -153,10 +189,18 @@ export default function GroupPeerContainer({ children }: { children: React.React
         });
       });
 
-      // Incoming data connection: route to group if in room, set up chat relay
+      // Incoming data connection: route to group if in room, set up chat relay.
+      // IMPORTANT: Only store one data connection per peer. If we already have
+      // one stored for this peer, skip setup to prevent overwriting.
       peer.on("connection", (conn: DataConnection) => {
         const gs = useGroupStore.getState();
         if (gs.groupStatus !== "in-room") return;
+
+        const existingParticipant = gs.participants.get(conn.peer);
+        if (existingParticipant?.dataConnection) {
+          console.log(`[GroupPeer] Already have data connection with ${conn.peer}, skipping duplicate`);
+          return;
+        }
 
         console.log(`[GroupPeer] Incoming data connection from ${conn.peer}`);
         setupGroupDataConnection(conn);
@@ -239,30 +283,34 @@ function setupGroupDataConnection(conn: DataConnection) {
 
 // ─── Connect to a newly discovered peer ──────────────────────────────────────
 function handlePeerDiscovery(peerIds: string[], _roomId: string) {
-  const gs = useGroupStore.getState();
   const myId = usePeerStore.getState().myId;
   const peer = usePeerStore.getState().peer;
   if (!peer) return;
 
+  // Always read localStream from the current state (not a closure)
+  const localStream = useGroupStore.getState().localStream;
+
   for (const remotePeerId of peerIds) {
     if (remotePeerId === myId) continue;
-    if (gs.participants.has(remotePeerId)) continue;
+    if (useGroupStore.getState().participants.has(remotePeerId)) continue;
 
     console.log(`[GroupPeer] Discovered peer ${remotePeerId}, connecting...`);
-    connectToPeer(peer, remotePeerId, gs.localStream);
+    connectToPeer(peer, remotePeerId, localStream);
   }
 }
 
 // ─── Handle a new peer announcing they joined ────────────────────────────────
 function handleNewPeerJoining(peerId: string, displayName: string) {
-  const gs = useGroupStore.getState();
   const myId = usePeerStore.getState().myId;
   const peer = usePeerStore.getState().peer;
   if (!peer || peerId === myId) return;
-  if (gs.participants.has(peerId)) return;
+  if (useGroupStore.getState().participants.has(peerId)) return;
+
+  // Always read localStream from the current state
+  const localStream = useGroupStore.getState().localStream;
 
   console.log(`[GroupPeer] New peer joining: ${peerId} (${displayName})`);
-  connectToPeer(peer, peerId, gs.localStream);
+  connectToPeer(peer, peerId, localStream);
 }
 
 // ─── Establish media + data connection to a remote peer ──────────────────────
@@ -273,24 +321,36 @@ function connectToPeer(
 ) {
   const stream = localStream ?? new MediaStream();
 
+  console.log(
+    `[GroupPeer] connectToPeer → ${remotePeerId} (tracks: ${stream.getTracks().length}, video: ${stream.getVideoTracks().length}, audio: ${stream.getAudioTracks().length})`,
+  );
+
+  if (stream.getTracks().length === 0) {
+    console.warn(`[GroupPeer] ⚠️ Calling ${remotePeerId} with EMPTY stream — video/audio won't flow!`);
+  }
+
   // Add participant placeholder immediately
-  useGroupStore.getState().addParticipant({
-    peerId: remotePeerId,
-    displayName: remotePeerId.slice(0, 8),
-    remoteStream: null,
-    mediaCall: null,
-    dataConnection: null,
-    hasVideo: false,
-    hasAudio: false,
-    isMuted: false,
-    joinedAt: new Date(),
-  });
+  if (!useGroupStore.getState().participants.has(remotePeerId)) {
+    useGroupStore.getState().addParticipant({
+      peerId: remotePeerId,
+      displayName: remotePeerId.slice(0, 8),
+      remoteStream: null,
+      mediaCall: null,
+      dataConnection: null,
+      hasVideo: false,
+      hasAudio: false,
+      isMuted: false,
+      joinedAt: new Date(),
+    });
+  }
 
   // Media call
   const call = peer.call(remotePeerId, stream);
 
   call.on("stream", (remoteStream: MediaStream) => {
-    console.log(`[GroupPeer] ✅ Got remote stream from ${remotePeerId}`);
+    console.log(
+      `[GroupPeer] ✅ Got remote stream from ${remotePeerId} (video: ${remoteStream.getVideoTracks().length}, audio: ${remoteStream.getAudioTracks().length})`,
+    );
     useGroupStore.getState().updateParticipant(remotePeerId, {
       remoteStream,
       mediaCall: call,
@@ -300,6 +360,7 @@ function connectToPeer(
   });
 
   call.on("close", () => {
+    console.log(`[GroupPeer] Call with ${remotePeerId} closed`);
     useGroupStore.getState().removeParticipant(remotePeerId);
   });
 
@@ -308,7 +369,7 @@ function connectToPeer(
     useGroupStore.getState().removeParticipant(remotePeerId);
   });
 
-  // Data channel
+  // Data channel — single data connection per peer
   const conn = peer.connect(remotePeerId, { reliable: true, serialization: "json" });
   setupGroupDataConnection(conn);
 }
@@ -327,8 +388,9 @@ export function useGroupCallActions() {
     if (displayName) groupStore.setMyDisplayName(displayName);
 
     // Get local media
+    let stream: MediaStream;
     try {
-      const stream = await getBestStream();
+      stream = await getBestStream();
       groupStore.setLocalStream(stream);
       groupStore.setHasLocalVideo(stream.getVideoTracks().length > 0);
     } catch (err) {
@@ -336,6 +398,10 @@ export function useGroupCallActions() {
       groupStore.setGroupError("Failed to access camera/microphone.");
       return;
     }
+
+    console.log(
+      `[GroupPeer] Local stream acquired — video: ${stream.getVideoTracks().length}, audio: ${stream.getAudioTracks().length}`,
+    );
 
     // Room ID = our own peer ID (simplest approach — share this to join)
     const roomId = myId;
@@ -360,8 +426,9 @@ export function useGroupCallActions() {
     groupStore.setRoomId(roomPeerId);
 
     // Get local media
+    let stream: MediaStream;
     try {
-      const stream = await getBestStream();
+      stream = await getBestStream();
       groupStore.setLocalStream(stream);
       groupStore.setHasLocalVideo(stream.getVideoTracks().length > 0);
     } catch (err) {
@@ -370,25 +437,37 @@ export function useGroupCallActions() {
       return;
     }
 
+    console.log(
+      `[GroupPeer] Local stream acquired — video: ${stream.getVideoTracks().length}, audio: ${stream.getAudioTracks().length}`,
+    );
+
     groupStore.setGroupStatus("in-room");
 
-    // Connect to the room host — they'll send us "room-peers" with everyone else
-    connectToPeer(peer, roomPeerId, groupStore.localStream);
+    // ── FIX: Pass the `stream` local variable directly, NOT `groupStore.localStream`
+    // which is a stale closure from the last render. The store was just updated via
+    // setLocalStream(stream) but the hook's value won't refresh until re-render.
+    connectToPeer(peer, roomPeerId, stream);
 
-    // Announce ourselves to the host so they can broadcast to others
-    const conn = peer.connect(roomPeerId, { reliable: true, serialization: "json" });
-    conn.on("open", () => {
-      const msg: GroupDataMessage = {
-        type: "join-room",
-        peerId: myId,
-        roomId: roomPeerId,
-        displayName: displayName || myId.slice(0, 8),
-      };
-      conn.send(JSON.stringify(msg));
-
-      // After announcing, the host will call us back. The auto-answer
-      // handler in the useEffect above will pick it up.
-    });
+    // ── FIX: Do NOT open a second peer.connect() here. The data connection
+    // created by connectToPeer() is the single channel for this peer pair.
+    // Send the join-room announcement through that same channel once it opens.
+    // We poll for the data connection to be ready, then send.
+    const announceInterval = setInterval(() => {
+      const participant = useGroupStore.getState().participants.get(roomPeerId);
+      if (participant?.dataConnection) {
+        clearInterval(announceInterval);
+        const msg: GroupDataMessage = {
+          type: "join-room",
+          peerId: myId,
+          roomId: roomPeerId,
+          displayName: displayName || myId.slice(0, 8),
+        };
+        participant.dataConnection.send(JSON.stringify(msg));
+        console.log(`[GroupPeer] ✅ Sent join-room announcement to ${roomPeerId}`);
+      }
+    }, 300);
+    // Safety: stop polling after 15 seconds
+    setTimeout(() => clearInterval(announceInterval), 15000);
 
     console.log(`[GroupPeer] Joining room ${roomPeerId}...`);
   }, [groupStore, createRoom]);
@@ -400,21 +479,25 @@ export function useGroupCallActions() {
     if (!peer || gs.groupStatus !== "in-room") return;
     if (gs.participants.has(remotePeerId)) return;
 
+    // Always read the current local stream
     connectToPeer(peer, remotePeerId, gs.localStream);
 
     // Tell the new peer about all existing participants
-    setTimeout(() => {
+    const notifyInterval = setInterval(() => {
       const participant = useGroupStore.getState().participants.get(remotePeerId);
       if (participant?.dataConnection) {
+        clearInterval(notifyInterval);
         const existingPeerIds = Array.from(useGroupStore.getState().participants.keys());
         const msg: GroupDataMessage = {
           type: "room-peers",
           peers: [usePeerStore.getState().myId, ...existingPeerIds],
-          roomId: gs.roomId,
+          roomId: useGroupStore.getState().roomId,
         };
         participant.dataConnection.send(JSON.stringify(msg));
+        console.log(`[GroupPeer] Sent peer list to ${remotePeerId}:`, existingPeerIds);
       }
-    }, 2000);
+    }, 300);
+    setTimeout(() => clearInterval(notifyInterval), 15000);
   }, []);
 
   // Leave room gracefully
@@ -447,11 +530,16 @@ export function useGroupCallActions() {
     const payload = JSON.stringify(msg);
 
     // Send to every connected participant
+    let sentCount = 0;
     gs.participants.forEach((p) => {
       if (p.dataConnection) {
-        try { p.dataConnection.send(payload); } catch { /* ignore */ }
+        try {
+          p.dataConnection.send(payload);
+          sentCount++;
+        } catch { /* ignore */ }
       }
     });
+    console.log(`[GroupPeer] Chat message broadcast to ${sentCount} peer(s)`);
 
     // Add to our own history
     gs.addGroupMessage({
