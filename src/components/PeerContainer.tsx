@@ -6,7 +6,7 @@ import {
   ChatMessage,
   type ConnectionStatus,
 } from "@/store/usePeerStore";
-import { useGroupStore } from "@/store/useGroupStore";
+import { routeIncomingCallToGroup, routeIncomingDataToGroup } from "@/components/GroupPeerContainer";
 import type Peer from "peerjs";
 import type { DataConnection } from "peerjs";
 
@@ -223,7 +223,7 @@ const PEER_CONFIG: RTCConfiguration = {
 export default function PeerContainer({ children }: { children: React.ReactNode }) {
   const {
     setPeer, setMyId,
-    setDataConnection, setMediaCall, setIncomingCall,
+    setDataConnection, setIncomingCall,
     setStatus, setRemotePeerId,
     addMessage, setError,
   } = usePeerStore();
@@ -252,20 +252,18 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
         setStatus("ready");
       });
 
-      // Incoming data connection (receiver side — caller opens this after media connects)
+      // Incoming data connection — delegate to group if in-room, else handle as 1-to-1
       peerInstance.on("connection", (conn) => {
-        // Skip if group mode is active — GroupPeerContainer handles it
-        if (useGroupStore.getState().groupStatus === "in-room") return;
+        if (routeIncomingDataToGroup(conn)) return;
         console.log("[PeerLink] Incoming data connection from:", conn.peer);
         const existing = usePeerStore.getState().dataConnection;
         if (existing && existing !== conn) existing.close();
         setupDataConnection(conn, addMessage, setDataConnection, setStatus);
       });
 
-      // Incoming media call — park for user to accept/decline
+      // Incoming media call — delegate to group if in-room, else park for user to accept/decline
       peerInstance.on("call", (call) => {
-        // Skip if group mode is active — GroupPeerContainer handles it
-        if (useGroupStore.getState().groupStatus === "in-room") return;
+        if (routeIncomingCallToGroup(call)) return;
         const currentStatus = usePeerStore.getState().status;
         if (currentStatus === "connected" || currentStatus === "calling" || currentStatus === "incoming") {
           call.close();
@@ -366,7 +364,7 @@ function openDataChannelWithRetry(
   attempt = 1,
 ): void {
   console.log(`[PeerLink] Opening data channel to ${remotePeerId} (attempt ${attempt}/${MAX_DC_RETRIES})`);
-  const conn = peer.connect(remotePeerId, { reliable: true, serialization: "json" });
+  const conn = peer.connect(remotePeerId, { reliable: true });
 
   // Track whether this attempt succeeded
   let succeeded = false;
