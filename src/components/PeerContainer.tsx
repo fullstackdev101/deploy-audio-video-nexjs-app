@@ -90,7 +90,7 @@ const STUN_SERVERS: RTCIceServer[] = [
 ];
 
 console.log("Check Env:", process.env.NEXT_PUBLIC_TURN_HOST);
-console.log("Check user:", process.env.NEXT_PUBLIC_TURN_USER);
+console.log("Check user:::", process.env.NEXT_PUBLIC_TURN_USER);
 console.log("Check pass:", process.env.NEXT_PUBLIC_TURN_PASS);
 
 // console.log("Check user:", NEXT_PUBLIC_TURN_USER);
