@@ -6,7 +6,10 @@ import {
   ChatMessage,
   type ConnectionStatus,
 } from "@/store/usePeerStore";
-import { routeIncomingCallToGroup, routeIncomingDataToGroup } from "@/components/GroupPeerContainer";
+import {
+  routeIncomingCallToGroup,
+  routeIncomingDataToGroup,
+} from "@/components/GroupPeerContainer";
 import type Peer from "peerjs";
 import type { DataConnection } from "peerjs";
 
@@ -42,15 +45,22 @@ async function getBestStream(): Promise<MediaStream> {
     });
   } catch (err) {
     const name = (err as Error).name;
-    if (name === "NotAllowedError" || name === "PermissionDeniedError") throw err;
-    console.warn("[PeerLink] Combined video+audio failed. Attempting fallbacks:", err);
+    if (name === "NotAllowedError" || name === "PermissionDeniedError")
+      throw err;
+    console.warn(
+      "[PeerLink] Combined video+audio failed. Attempting fallbacks:",
+      err,
+    );
     try {
       console.log("[PeerLink] Attempting video-only fallback...");
       return await navigator.mediaDevices.getUserMedia({ video: true });
     } catch {
       console.warn("[PeerLink] Video-only failed. Attempting audio-only...");
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const s = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
         console.log("[PeerLink] Audio-only fallback successful.");
         return s;
       } catch {
@@ -79,9 +89,19 @@ const STUN_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.cloudflare.com:3478" },
 ];
 
+console.log("Check Env:", process.env.NEXT_PUBLIC_TURN_HOST);
+console.log("Check user:", process.env.NEXT_PUBLIC_TURN_USER);
+console.log("Check pass:", process.env.NEXT_PUBLIC_TURN_PASS);
+
+// console.log("Check user:", NEXT_PUBLIC_TURN_USER);
+
+// const TURN_HOST_RAW = process.env.NEXT_PUBLIC_TURN_HOST ?? "";
+// const TURN_USER = process.env.NEXT_PUBLIC_TURN_USER ?? "";
+// const TURN_PASS = process.env.NEXT_PUBLIC_TURN_PASS ?? "";
+
 const TURN_HOST_RAW = process.env.NEXT_PUBLIC_TURN_HOST ?? "";
-const TURN_USER     = process.env.NEXT_PUBLIC_TURN_USER ?? "";
-const TURN_PASS     = process.env.NEXT_PUBLIC_TURN_PASS ?? "";
+const TURN_USER = process.env.NEXT_PUBLIC_TURN_USER ?? "";
+const TURN_PASS = process.env.NEXT_PUBLIC_TURN_PASS ?? "";
 
 // Strip any scheme/port the user may have accidentally included in the env var
 function stripSchemeAndPort(host: string): string {
@@ -151,7 +171,10 @@ if (hasPrivateTurn) {
 }
 console.log(
   "[PeerLink] ICE servers:",
-  ICE_SERVERS.map((s) => ({ urls: s.urls, user: s.username ? String(s.username).slice(0, 8) + "…" : undefined })),
+  ICE_SERVERS.map((s) => ({
+    urls: s.urls,
+    user: s.username ? String(s.username).slice(0, 8) + "…" : undefined,
+  })),
 );
 
 // ─── TURN connectivity probe ──────────────────────────────────────────────────
@@ -166,11 +189,22 @@ async function probeTurnConnectivity(): Promise<void> {
 
   await new Promise<void>((resolve) => {
     const found = { relay: false, srflx: false };
-    const finish = () => { try { pc.close(); } catch { /* ignore */ } resolve(); };
+    const finish = () => {
+      try {
+        pc.close();
+      } catch {
+        /* ignore */
+      }
+      resolve();
+    };
     const timer = setTimeout(finish, 8000);
 
     pc.onicecandidate = (e) => {
-      if (!e.candidate) { clearTimeout(timer); finish(); return; }
+      if (!e.candidate) {
+        clearTimeout(timer);
+        finish();
+        return;
+      }
       const t = e.candidate.type as string;
       if (t === "relay" && !found.relay) {
         found.relay = true;
@@ -182,7 +216,10 @@ async function probeTurnConnectivity(): Promise<void> {
       }
       if (t === "srflx" && !found.srflx) {
         found.srflx = true;
-        console.log("[PeerLink] ✅ STUN srflx candidate gathered:", e.candidate.candidate);
+        console.log(
+          "[PeerLink] ✅ STUN srflx candidate gathered:",
+          e.candidate.candidate,
+        );
       }
     };
 
@@ -202,30 +239,43 @@ async function probeTurnConnectivity(): Promise<void> {
 
     pc.createOffer()
       .then((o) => pc.setLocalDescription(o))
-      .catch(() => { clearTimeout(timer); finish(); });
+      .catch(() => {
+        clearTimeout(timer);
+        finish();
+      });
   });
 }
 
 if (typeof window !== "undefined") {
   probeTurnConnectivity().catch(() => {
-    console.warn("[PeerLink] TURN probe threw — check browser console for details.");
+    console.warn(
+      "[PeerLink] TURN probe threw — check browser console for details.",
+    );
   });
 }
 
 // ─── PeerJS RTCConfiguration ──────────────────────────────────────────────────
 const PEER_CONFIG: RTCConfiguration = {
   iceServers: ICE_SERVERS,
-  iceTransportPolicy: "all",   // try direct first, relay as fallback
-  iceCandidatePoolSize: 10,    // pre-gather relay candidates before call starts
+  iceTransportPolicy: "all", // try direct first, relay as fallback
+  iceCandidatePoolSize: 10, // pre-gather relay candidates before call starts
 };
 
 // ─── PeerContainer ────────────────────────────────────────────────────────────
-export default function PeerContainer({ children }: { children: React.ReactNode }) {
+export default function PeerContainer({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const {
-    setPeer, setMyId,
-    setDataConnection, setIncomingCall,
-    setStatus, setRemotePeerId,
-    addMessage, setError,
+    setPeer,
+    setMyId,
+    setDataConnection,
+    setIncomingCall,
+    setStatus,
+    setRemotePeerId,
+    addMessage,
+    setError,
   } = usePeerStore();
 
   const peerRef = useRef<Peer | null>(null);
@@ -238,7 +288,9 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
       setStatus("initializing");
       const { default: PeerJS } = await import("peerjs");
 
-      console.log("[PeerLink] Initializing PeerJS — iceTransportPolicy: all, iceCandidatePoolSize: 10");
+      console.log(
+        "[PeerLink] Initializing PeerJS — iceTransportPolicy: all, iceCandidatePoolSize: 10",
+      );
       peerInstance = new PeerJS(undefined as unknown as string, {
         debug: 2,
         config: PEER_CONFIG,
@@ -265,7 +317,11 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
       peerInstance.on("call", (call) => {
         if (routeIncomingCallToGroup(call)) return;
         const currentStatus = usePeerStore.getState().status;
-        if (currentStatus === "connected" || currentStatus === "calling" || currentStatus === "incoming") {
+        if (
+          currentStatus === "connected" ||
+          currentStatus === "calling" ||
+          currentStatus === "incoming"
+        ) {
           call.close();
           return;
         }
@@ -299,8 +355,10 @@ export default function PeerContainer({ children }: { children: React.ReactNode 
     init();
 
     return () => {
-      if (peerRef.current && !peerRef.current.destroyed) peerRef.current.destroy();
-      if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
+      if (peerRef.current && !peerRef.current.destroyed)
+        peerRef.current.destroy();
+      if (localStreamRef.current)
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -321,8 +379,15 @@ function setupDataConnection(
   conn.on("data", (raw: unknown) => {
     try {
       const parsed = JSON.parse(raw as string) as { text: string };
-      addMessage({ id: crypto.randomUUID(), from: "them", text: parsed.text, timestamp: new Date() });
-    } catch { /* ignore malformed */ }
+      addMessage({
+        id: crypto.randomUUID(),
+        from: "them",
+        text: parsed.text,
+        timestamp: new Date(),
+      });
+    } catch {
+      /* ignore malformed */
+    }
   });
 
   conn.on("close", () => {
@@ -363,7 +428,9 @@ function openDataChannelWithRetry(
   setStatus: (status: ConnectionStatus) => void,
   attempt = 1,
 ): void {
-  console.log(`[PeerLink] Opening data channel to ${remotePeerId} (attempt ${attempt}/${MAX_DC_RETRIES})`);
+  console.log(
+    `[PeerLink] Opening data channel to ${remotePeerId} (attempt ${attempt}/${MAX_DC_RETRIES})`,
+  );
   const conn = peer.connect(remotePeerId, { reliable: true });
 
   // Track whether this attempt succeeded
@@ -379,10 +446,19 @@ function openDataChannelWithRetry(
     console.warn(`[PeerLink] Data channel attempt ${attempt} error:`, err);
     if (!succeeded && attempt < MAX_DC_RETRIES) {
       setTimeout(() => {
-        openDataChannelWithRetry(peer, remotePeerId, addMessage, setDataConnection, setStatus, attempt + 1);
+        openDataChannelWithRetry(
+          peer,
+          remotePeerId,
+          addMessage,
+          setDataConnection,
+          setStatus,
+          attempt + 1,
+        );
       }, DC_RETRY_DELAY_MS);
     } else if (!succeeded) {
-      console.error("[PeerLink] Data channel failed after all retries. Chat will be unavailable.");
+      console.error(
+        "[PeerLink] Data channel failed after all retries. Chat will be unavailable.",
+      );
     }
   };
 
@@ -392,9 +468,18 @@ function openDataChannelWithRetry(
       console.warn(`[PeerLink] Data channel attempt ${attempt} timed out`);
       conn.close();
       if (attempt < MAX_DC_RETRIES) {
-        openDataChannelWithRetry(peer, remotePeerId, addMessage, setDataConnection, setStatus, attempt + 1);
+        openDataChannelWithRetry(
+          peer,
+          remotePeerId,
+          addMessage,
+          setDataConnection,
+          setStatus,
+          attempt + 1,
+        );
       } else {
-        console.error("[PeerLink] Data channel failed after all retries. Chat will be unavailable.");
+        console.error(
+          "[PeerLink] Data channel failed after all retries. Chat will be unavailable.",
+        );
       }
     }
   }, 8000);
@@ -434,7 +519,12 @@ export function useCallActions() {
       return;
     }
 
-    console.log("[PeerLink] Local stream — video:", stream.getVideoTracks().length, "audio:", stream.getAudioTracks().length);
+    console.log(
+      "[PeerLink] Local stream — video:",
+      stream.getVideoTracks().length,
+      "audio:",
+      stream.getAudioTracks().length,
+    );
     store.setLocalStream(stream);
     store.setHasLocalVideo(stream.getVideoTracks().length > 0);
     store.setStatus("calling");
@@ -450,20 +540,31 @@ export function useCallActions() {
         store.setLocalStream(null);
         store.setMediaCall(null);
         store.setStatus("ready");
-        store.setError("No answer. The other peer did not accept the call in time.");
+        store.setError(
+          "No answer. The other peer did not accept the call in time.",
+        );
       }
     }, CALL_TIMEOUT_MS);
 
     call.on("stream", (remoteStream) => {
       clearTimeout(timeoutId);
-      console.log("[PeerLink] ✅ Caller got remote stream — video tracks:", remoteStream.getVideoTracks().length);
+      console.log(
+        "[PeerLink] ✅ Caller got remote stream — video tracks:",
+        remoteStream.getVideoTracks().length,
+      );
       store.setRemoteStream(remoteStream);
       store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
 
       // Open data channel now that media is flowing.
       // Use retry logic — on restrictive networks the first attempt may fail.
-      openDataChannelWithRetry(peer, remotePeerId, store.addMessage, store.setDataConnection, store.setStatus);
+      openDataChannelWithRetry(
+        peer,
+        remotePeerId,
+        store.addMessage,
+        store.setDataConnection,
+        store.setStatus,
+      );
     });
 
     call.on("close", () => {
@@ -512,7 +613,12 @@ export function useCallActions() {
       return;
     }
 
-    console.log("[PeerLink] Local stream — video:", stream.getVideoTracks().length, "audio:", stream.getAudioTracks().length);
+    console.log(
+      "[PeerLink] Local stream — video:",
+      stream.getVideoTracks().length,
+      "audio:",
+      stream.getAudioTracks().length,
+    );
     store.setLocalStream(stream);
     store.setHasLocalVideo(stream.getVideoTracks().length > 0);
 
@@ -524,13 +630,18 @@ export function useCallActions() {
         store.setLocalStream(null);
         store.setMediaCall(null);
         store.setStatus("ready");
-        store.setError("Connection timed out. The caller's network may be blocking direct connections.");
+        store.setError(
+          "Connection timed out. The caller's network may be blocking direct connections.",
+        );
       }
     }, CALL_TIMEOUT_MS);
 
     incomingCall.on("stream", (remoteStream) => {
       clearTimeout(answererTimeout);
-      console.log("[PeerLink] ✅ Receiver got remote stream — video tracks:", remoteStream.getVideoTracks().length);
+      console.log(
+        "[PeerLink] ✅ Receiver got remote stream — video tracks:",
+        remoteStream.getVideoTracks().length,
+      );
       store.setRemoteStream(remoteStream);
       store.setHasRemoteVideo(remoteStream.getVideoTracks().length > 0);
       store.setStatus("connected");
@@ -543,7 +654,13 @@ export function useCallActions() {
       const { peer, remotePeerId } = usePeerStore.getState();
       if (peer && remotePeerId && !usePeerStore.getState().dataConnection) {
         console.log("[PeerLink] Receiver: no data channel yet, opening one...");
-        openDataChannelWithRetry(peer, remotePeerId, store.addMessage, store.setDataConnection, store.setStatus);
+        openDataChannelWithRetry(
+          peer,
+          remotePeerId,
+          store.addMessage,
+          store.setDataConnection,
+          store.setStatus,
+        );
       }
     });
 
@@ -580,7 +697,9 @@ export function useCallActions() {
       store.setLocalStream(null);
       store.setMediaCall(null);
       store.setStatus("ready");
-      store.setError("Failed to answer call. Check browser console and ensure connection is stable.");
+      store.setError(
+        "Failed to answer call. Check browser console and ensure connection is stable.",
+      );
     }
   }, [store]);
 
@@ -599,7 +718,13 @@ export function useCallActions() {
     const { peer, remotePeerId } = store;
     if (!peer || !remotePeerId) return;
     console.log("[PeerLink] Starting text chat with:", remotePeerId);
-    openDataChannelWithRetry(peer, remotePeerId, store.addMessage, store.setDataConnection, store.setStatus);
+    openDataChannelWithRetry(
+      peer,
+      remotePeerId,
+      store.addMessage,
+      store.setDataConnection,
+      store.setStatus,
+    );
     store.setStatus("connected");
     if (!store.isChatOpen) store.toggleChat();
   }, [store]);
@@ -624,12 +749,27 @@ export function useCallActions() {
   }, [store]);
 
   // ── SEND MESSAGE ───────────────────────────────────────────────────────────
-  const sendMessage = useCallback((text: string) => {
-    const { dataConnection } = store;
-    if (!dataConnection || !text.trim()) return;
-    dataConnection.send(JSON.stringify({ text: text.trim() }));
-    store.addMessage({ id: crypto.randomUUID(), from: "me", text: text.trim(), timestamp: new Date() });
-  }, [store]);
+  const sendMessage = useCallback(
+    (text: string) => {
+      const { dataConnection } = store;
+      if (!dataConnection || !text.trim()) return;
+      dataConnection.send(JSON.stringify({ text: text.trim() }));
+      store.addMessage({
+        id: crypto.randomUUID(),
+        from: "me",
+        text: text.trim(),
+        timestamp: new Date(),
+      });
+    },
+    [store],
+  );
 
-  return { startCall, acceptCall, declineCall, startTextChat, endCall, sendMessage };
+  return {
+    startCall,
+    acceptCall,
+    declineCall,
+    startTextChat,
+    endCall,
+    sendMessage,
+  };
 }
